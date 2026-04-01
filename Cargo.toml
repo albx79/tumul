@@ -10,6 +10,9 @@ readme = "README.md"
 [dependencies]
 regex = "1.10"
 
+[build-dependencies]
+lalrpop = "0.23.1"
+
 [profile.dev]
 opt-level = 0
 

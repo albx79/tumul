@@ -1,5 +1,5 @@
 mod lexer;
-mod interpreter;
+mod parser;
 
 use std::env;
 use std::fs;
@@ -13,5 +13,5 @@ fn main() {
     let filename = &args[1];
     let code = fs::read_to_string(filename)
         .expect("Failed to read file");
-    unimplemented!()
+    parser::parse(&code);
 }
