@@ -1,0 +1,79 @@
+(* ==========================
+   Tumul EBNF (2024)
+   Main features:
+     - Structural tuples/records (parentheses)
+     - Tags (sigil: ')
+     - Functions/lambdas
+     - Handler values & applications
+     - Pattern matching, including "rest" patterns
+     - Indentation is significant (INDENT/DEDENT tokens)
+     - No list literal
+   ========================== *)
+
+program         ::= { statement }
+
+statement       ::= definition | expr
+
+definition      ::= identifier "=" expr
+
+expr            ::= handler_application
+                | match_expr
+
+handler_application ::= handler_value "!" handler_application
+                
+
+handler_value   ::= "(" handler_field { "," handler_field } ")"
+handler_field   ::= identifier ":" lambda_expr
+
+match_expr      ::= application [ match_block ]
+
+match_block     ::= "?" ( paren_match_block | indent_match_block )
+
+paren_match_block ::= "(" match_rule { "," match_rule } ")"
+indent_match_block ::= INDENT match_rule { match_rule } DEDENT
+
+match_rule      ::= pattern "->" expr
+
+application     ::= primary_expr { argument_list }
+
+argument_list   ::= "(" [ expr { "," expr } ] ")"
+                | primary_expr
+
+primary_expr    ::= number
+                | string
+                | tag
+                | identifier
+                | lambda_expr
+                | tuple_literal
+
+lambda_expr     ::= "\" pattern "->" expr
+
+tuple_literal   ::= "(" [ tuple_field { "," tuple_field } ] ")"
+tuple_field     ::= identifier ":" expr  | expr
+
+number          ::= digit { digit } [ "." digit { digit } ]
+string          ::= "\"" { any_char_except_quote_or_backslash | escape_sequence } "\""
+tag             ::= "'" identifier
+
+pattern         ::= tag
+                | identifier
+                | "_"
+                | number
+                | string
+                | tuple_pattern
+
+tuple_pattern   ::= "(" [ pattern_list [ "," rest_pattern ] ] ")"
+pattern_list    ::= pattern { "," pattern }
+rest_pattern    ::= identifier ".."     (* e.g. t.. means "rest of tuple" *)
+
+identifier      ::= letter { letter | digit | "_" }
+
+(* Virtual tokens for indentation, produced by lexer:
+   - INDENT is inserted after ? in match_expr when a newline is followed by increased indentation.
+   - DEDENT is inserted when dedenting back to previous or top level.
+*)
+
+digit           ::= "0" | "1" | ... | "9"
+letter          ::= "a" | ... | "z" | "A" | ... | "Z"
+escape_sequence ::= "\\" any_char
+any_char        ::= any Unicode character

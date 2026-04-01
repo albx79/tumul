@@ -6,7 +6,7 @@
 - First-class effect handlers (with punctuation, not keywords)
 - Minimal, clean syntax
 
-**Extension:** `.tm`
+**Extension:** `.tu`
 
 ---
 
@@ -20,7 +20,7 @@
 ### Usage
 
 ```bash
-python run_tumul.py example.tm
+python run_tumul.py example.tu
 ```
 
 ---
@@ -30,11 +30,11 @@ python run_tumul.py example.tm
 - `parser.py` – Tumul parser (to AST)
 - `interpreter.py` – Interpreter (evaluates AST)
 - `run_tumul.py` – Entry point/wrapper
-- `example.tm` – Sample Tumul source
+- `example.tu` – Sample Tumul source
 
 ---
 
-## Example: `example.tm`
+## Example: `example.tu`
 
 ```tumul
 get = \_ -> 3

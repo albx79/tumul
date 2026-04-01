@@ -1,0 +1,17 @@
+[package]
+name = "tumul"
+version = "0.1.0"
+edition = "2024"
+authors = ["Alberto Colombo <albx79@gmail.com>"]
+description = "A minimal Tumul interpreter and parser in Rust"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+regex = "1.10"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
