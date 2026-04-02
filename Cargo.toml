@@ -9,6 +9,7 @@ readme = "README.md"
 
 [dependencies]
 regex = "1.10"
+lalrpop-util = { version = "0.23.1", features = ["unicode"] }
 
 [build-dependencies]
 lalrpop = "0.23.1"

@@ -1,10 +1,20 @@
-lalrpop_mod!(tumul); // generated file
-use tumul::ProgramParser;
+use lalrpop_util::lalrpop_mod;
 
-use crate::lexer::Lexer;
+lalrpop_mod!(tumul);
 
-pub fn parse(input: &str) {
+use tumul::ProgramParser as Parser;
+
+use crate::{ast::Ast, lexer::Lexer};
+
+pub fn parse(input: &str) -> Ast {
     let lexer = Lexer::new(input);
-    let parsed = ProgramParser::new().parse(lexer);
-    parsed
+    let parsed = Parser::new().parse(lexer);
+    parsed.unwrap()
+}
+
+#[test]
+fn test_parser() {
+    let src = "2 + 3 + 4";
+    let ast = parse(src);
+    dbg!(ast);
 }

@@ -24,19 +24,36 @@ pub enum Token {
     Indent,
     Dedent,
     Newline,
+    Underscore,
     Eof,
 }
 
+type TokenPos = (usize, Token, usize);
+
 pub struct Lexer<'a> {
+    current_pos: usize,
     lines: Lines<'a>,
     indentation_stack: Vec<usize>,
-    pending_tokens: VecDeque<Token>,
+    pending_tokens: VecDeque<TokenPos>,
     eof_emitted: bool,
+}
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = TokenPos;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.eof_emitted {
+            Some(self.next_token())
+        } else {
+            None
+        }
+    }
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         Lexer {
+            current_pos: 0,
             lines: input.lines(),
             indentation_stack: vec![0], // stack bottom is 0
             pending_tokens: VecDeque::new(),
@@ -44,22 +61,24 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_token(&mut self) -> Token {
+    pub fn next_token(&mut self) -> TokenPos {
         // 1. Return any pending INDENT/DEDENT/content/NEWLINE tokens
         if let Some(token) = self.pending_tokens.pop_front() {
             return token;
         }
         // 2. If at EOF, emit all Dedents and then Eof
         if self.eof_emitted {
-            return Token::Eof;
+            return (self.current_pos, Token::Eof, self.current_pos);
         }
 
         // 3. Otherwise, read the next non-blank, non-comment line
         while let Some(line) = self.lines.next() {
             let original = line;
             let line = line.trim_end(); // remove trailing whitespace
+            self.current_pos += original.len() - line.len();
             // skip empty lines entirely (they don't affect indentation)
             if line.trim().is_empty() {
+                self.current_pos += line.len();
                 continue;
             }
 
@@ -73,20 +92,20 @@ impl<'a> Lexer<'a> {
             let current_indent = *self.indentation_stack.last().unwrap();
             if indent > current_indent {
                 self.indentation_stack.push(indent);
-                self.pending_tokens.push_back(Token::Indent);
+                self.pending_tokens.push_back((self.current_pos, Token::Indent, self.current_pos + indent - current_indent));
             } else if indent < current_indent {
                 while indent < *self.indentation_stack.last().unwrap() {
                     self.indentation_stack.pop();
-                    self.pending_tokens.push_back(Token::Dedent);
+                    self.pending_tokens.push_back((self.current_pos, Token::Dedent, self.current_pos + current_indent - indent));
                 }
             }
 
             // 5. Now emit tokens for this line, then NEWLINE
-            let tokens = lex_line_tokens(line);
+            let tokens = lex_line_tokens(line, &mut self.current_pos);
             for tok in tokens {
                 self.pending_tokens.push_back(tok);
             }
-            self.pending_tokens.push_back(Token::Newline);
+            self.pending_tokens.push_back((self.current_pos, Token::Newline, self.current_pos.inc()));
 
             // 6. Return the next token (will be INDENT/DEDENTs first if present)
             return self.pending_tokens.pop_front().unwrap();
@@ -95,17 +114,17 @@ impl<'a> Lexer<'a> {
         // 7. At EOF: emit remaining DEDENTs before the Eof token
         while self.indentation_stack.len() > 1 {
             self.indentation_stack.pop();
-            self.pending_tokens.push_back(Token::Dedent);
+            self.pending_tokens.push_back((self.current_pos, Token::Dedent, self.current_pos));
         }
-        self.pending_tokens.push_back(Token::Eof);
+        self.pending_tokens.push_back((self.current_pos, Token::Eof, self.current_pos));
         self.eof_emitted = true;
         self.pending_tokens.pop_front().unwrap()
     }
 }
 
-fn lex_line_tokens(line: &str) -> Vec<Token> {
+fn lex_line_tokens(line: &str, pos: &mut usize) -> Vec<TokenPos> {
     // Simple hand-rolled scanner for Tumul tokens
-    let mut tokens = Vec::new();
+    let mut tokens: Vec<TokenPos> = Vec::new();
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
 
@@ -114,6 +133,7 @@ fn lex_line_tokens(line: &str) -> Vec<Token> {
         // Skip whitespace inside the line (indentation was handled before)
         if c.is_whitespace() {
             i += 1;
+            pos.inc();
             continue;
         }
         // Numbers
@@ -130,7 +150,7 @@ fn lex_line_tokens(line: &str) -> Vec<Token> {
             }
             let num_str = &line[i..j];
             let num = num_str.parse::<f64>().unwrap();
-            tokens.push(Token::Number(num));
+            tokens.push(pos.tok_i_j(Token::Number(num), i, j));
             i = j;
             continue;
         }
@@ -141,7 +161,9 @@ fn lex_line_tokens(line: &str) -> Vec<Token> {
                 j += 1;
             }
             let id = &line[i..j];
-            tokens.push(Token::Ident(id.to_string()));
+            let len = j - i;
+            tokens.push((*pos, Token::Ident(id.to_string()), *pos + len));
+            *pos += len;
             i = j;
             continue;
         }
@@ -152,7 +174,9 @@ fn lex_line_tokens(line: &str) -> Vec<Token> {
                 j += 1;
             }
             let tag = &line[i + 1..j];
-            tokens.push(Token::Tag(tag.to_string()));
+            let len = j - i;
+            tokens.push((*pos, Token::Tag(tag.to_string()), *pos + len));
+            *pos += len;
             i = j;
             continue;
         }
@@ -166,74 +190,76 @@ fn lex_line_tokens(line: &str) -> Vec<Token> {
                 j += 1;
             }
             let string_lit = &line[i + 1..j];
-            tokens.push(Token::String(string_lit.replace("\\\"", "\"")));
+            tokens.push(pos.tok_i_j(Token::String(string_lit.replace("\\\"", "\"")), i, j));
             i = j + 1;
             continue;
         }
         // Operators and punctuation
         match c {
             '(' => {
-                tokens.push(Token::LParen);
+                tokens.push(pos.tok_inc(Token::LParen));
                 i += 1;
             }
             ')' => {
-                tokens.push(Token::RParen);
+                tokens.push(pos.tok_inc(Token::RParen));
                 i += 1;
             }
             ',' => {
-                tokens.push(Token::Comma);
+                tokens.push(pos.tok_inc(Token::Comma));
                 i += 1;
             }
             '=' => {
-                tokens.push(Token::Assign);
+                tokens.push(pos.tok_inc(Token::Assign));
                 i += 1;
             }
             '?' => {
-                tokens.push(Token::Match);
+                tokens.push(pos.tok_inc(Token::Match));
                 i += 1;
             }
             '!' => {
-                tokens.push(Token::Bang);
+                tokens.push(pos.tok_inc(Token::Bang));
                 i += 1;
             }
             ':' => {
-                tokens.push(Token::Colon);
+                tokens.push(pos.tok_inc(Token::Colon));
                 i += 1;
             }
             '\\' => {
-                tokens.push(Token::Lambda);
+                tokens.push(pos.tok_inc(Token::Lambda));
                 i += 1;
             }
             '+' => {
-                tokens.push(Token::Plus);
+                tokens.push(pos.tok_inc(Token::Plus));
                 i += 1;
             }
             '-' => {
                 if i + 1 < chars.len() && chars[i + 1] == '>' {
-                    tokens.push(Token::Arrow);
+                    tokens.push(pos.tok_inc_by(Token::Arrow, 2));
                     i += 2;
                 } else {
-                    tokens.push(Token::Minus);
+                    tokens.push(pos.tok_inc(Token::Minus));
                     i += 1;
                 }
             }
             '*' => {
-                tokens.push(Token::Times);
+                tokens.push(pos.tok_inc(Token::Times));
                 i += 1;
             }
             '/' => {
-                tokens.push(Token::Div);
+                tokens.push(pos.tok_inc(Token::Div));
                 i += 1;
             }
             '.' => {
                 if i + 1 < chars.len() && chars[i + 1] == '.' {
-                    tokens.push(Token::DotDot);
+                    tokens.push(pos.tok_inc_by(Token::DotDot, 2));
                     i += 2;
                 } else {
+                    *pos += 1;
                     i += 1;
                 }
             }
             _ => {
+                *pos += 1;
                 i += 1;
             }
         }
@@ -243,28 +269,59 @@ fn lex_line_tokens(line: &str) -> Vec<Token> {
 
 #[test]
 fn test() {
-    let src = r#"
-foo = (x, y)
-bar = \n -> (n, ())
-baz = foo ! bar(2)
-sequence = \t -> t ?
-  () -> 0
-  (h, t..) -> h + sequence(t..)
-other() !
-  fnc 1
-  fnc 2 ?
-    'ok -> -1.2
-    'bad -> 3.14
-"#;
+//     let src = r#"
+// foo = (x, y)
+// bar = \n -> (n, ())
+// baz = foo ! bar(2)
+// sequence = \t -> t ?
+//   () -> 0
+//   (h, t..) -> h + sequence(t..)
+// other() !
+//   fnc 1
+//   fnc 2 ?
+//     'ok -> -1.2
+//     'bad -> 3.14
+// "#;
+    let src = "2 + 3 + 4 + 5";
     let mut lexer = Lexer::new(src);
     loop {
         let tok = lexer.next_token();
         print!("{:?} ", tok);
-        if tok == Token::Newline {
+        if tok.1 == Token::Newline {
             println!()
         }
-        if tok == Token::Eof {
+        if tok.1 == Token::Eof {
             break;
         }
+    }
+}
+
+trait Inc {
+    fn inc(&mut self) -> usize;
+    fn tok_i_j(&mut self, tok: Token, i: usize, j: usize) -> TokenPos;
+    fn tok_inc(&mut self, tok: Token) -> TokenPos;
+    fn tok_inc_by(&mut self, tok: Token, n: usize) -> TokenPos;
+}
+
+impl Inc for usize {
+    fn inc(&mut self) -> usize {
+        *self += 1;
+        *self
+    }
+
+    fn tok_i_j(&mut self, tok: Token, i: usize, j: usize) -> TokenPos {
+        let old = *self;
+        *self += j - i;
+        (old, tok, *self)
+    }
+
+    fn tok_inc(&mut self, tok: Token) -> TokenPos {
+        self.tok_inc_by(tok, 1)
+    }
+
+    fn tok_inc_by(&mut self, tok: Token, n: usize) -> TokenPos {
+        let old = *self;
+        *self += n;
+        (old, tok, *self)
     }
 }

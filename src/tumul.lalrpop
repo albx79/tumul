@@ -1,221 +1,49 @@
-// tumul.lalrpop
+use crate::ast::Ast::{self, *};
+use crate::lexer::Token;
 
-// --- Import and declare location/token information ---
-
-use super::ast::*; // Adjust as needed for your AST types
-
-// You will pass in: tokens: impl Iterator<Item=(usize, Token, usize)>
-
-// The parser will output: AST for the whole program
 grammar;
 
-// --- Terminals ---
+pub Program: Ast = {
+    <e:Expr> Eof => e,
+    <e:Expr> Newline Eof => e,
+}
 
-// Connect your token enum variants to terminals:
-terminal
-    LParen = Token::LParen,
-    RParen = Token::RParen,
-    Comma  = Token::Comma,
-    Plus   = Token::Plus,
-    Minus  = Token::Minus,
-    Times  = Token::Times,
-    Div    = Token::Div,
-    Arrow  = Token::Arrow,
-    Lambda = Token::Lambda,
-    Assign = Token::Assign,
-    Match  = Token::Match,
-    Bang   = Token::Bang,
-    Colon  = Token::Colon,
-    DotDot = Token::DotDot,
-    Indent = Token::Indent,
-    Dedent = Token::Dedent,
-    Newline = Token::Newline,
-    Eof = Token::Eof;
-
-// Generic value tokens
-terminal Identifier = Token::Ident(_);
-terminal Number     = Token::Number(_);
-terminal String     = Token::String(_);
-terminal Tag        = Token::Tag(_);
-terminal Underscore = Token::Ident(ref s) if s == "_";
-
-// Define the start rule:
-Program: Box<AST> = {
-    Statements => Box::new(AST::Block(stmts))
+Expr: Ast = {
+    <e:Expr> Plus <t:Term> => Plus(Box::new(e), Box::new(t)),
+    Term,
 };
 
-Statements: Vec<AST> = {
-    <s:Statement*> => s
-};
+Term: Ast = {
+    <n:Number> => Num(n)
+}
 
-Statement: AST = {
-    Definition, Expr
-};
+extern {
+    type Location = usize;
+    type Error = String;
 
-Definition: AST = {
-    Identifier Assign Expr => AST::Definition(Identifier, Box::new(Expr))
-};
-
-Expr: AST = {
-    HandlerApplication
-};
-
-HandlerApplication: AST = {
-    HandlerValue Bang HandlerApplication => AST::HandlerApp(Box::new(HandlerValue), Box::new(HandlerApplication)),
-    MatchExpr
-};
-
-HandlerValue: AST = {
-    LParen <fields:HandlerFields> RParen => AST::HandlerValue(fields)
-};
-
-HandlerFields: Vec<(String, AST)> = {
-    HandlerField Comma HandlerFields => {
-        let mut v = vec![HandlerField];
-        v.extend(HandlerFields);
-        v
-    },
-    HandlerField => vec![HandlerField],
-    => vec![]
-};
-
-HandlerField: (String, AST) = {
-    Identifier Colon LambdaExpr => (Identifier, LambdaExpr)
-};
-
-MatchExpr: AST = {
-    Application MatchBlock => AST::Match(Box::new(Application), MatchBlock),
-    Application
-};
-
-MatchBlock: Vec<(Pattern, AST)> = {
-    Match ParenMatchBlock => ParenMatchBlock,
-    Match Indent MatchRuleList Dedent => MatchRuleList
-};
-
-ParenMatchBlock: Vec<(Pattern, AST)> = {
-    LParen MatchRules RParen => MatchRules
-};
-
-MatchRules: Vec<(Pattern, AST)> = {
-    MatchRule Comma MatchRules => {
-        let mut v = vec![MatchRule];
-        v.extend(MatchRules);
-        v
-    },
-    MatchRule => vec![MatchRule],
-    => vec![]
-};
-
-MatchRuleList: Vec<(Pattern, AST)> = {
-    MatchRule Newline MatchRuleList => {
-        let mut v = vec![MatchRule];
-        v.extend(MatchRuleList);
-        v
-    },
-    MatchRule => vec![MatchRule],
-    => vec![]
-};
-
-MatchRule: (Pattern, AST) = {
-    Pattern Arrow Expr => (Pattern, Expr)
-};
-
-Application: AST = {
-    PrimaryExpr ArgumentList => {
-        // If there are no args, just return primary expr; if there are: build left-assoc App nodes
-        ArgumentList.into_iter().fold(PrimaryExpr, |acc, arg| AST::App(Box::new(acc), Box::new(arg)))
+    enum Token {
+        Ident => Token::Ident(String),
+        Number => Token::Number(f64),
+        String => Token::String(String),
+        Tag => Token::Tag(String),
+        LParen => Token::LParen,
+        RParen => Token::RParen,
+        Comma => Token::Comma,
+        Plus => Token::Plus,
+        Minus => Token::Minus,
+        Times => Token::Times,
+        Div => Token::Div,
+        Arrow => Token::Arrow,
+        Lambda => Token::Lambda,
+        Assign => Token::Assign,
+        Match => Token::Match,
+        Bang => Token::Bang,
+        Colon => Token::Colon,
+        DotDot => Token::DotDot,
+        Indent => Token::Indent,
+        Dedent => Token::Dedent,
+        Newline => Token::Newline,
+        Underscore => Token::Underscore,
+        Eof => Token::Eof,
     }
-};
-
-ArgumentList: Vec<AST> = {
-    ArgumentList1,
-    => vec![]
-};
-ArgumentList1: Vec<AST> = {
-    LParen ExprListOpt RParen ArgumentList => {
-        // Support f(a)(b) chaining
-        let mut inner = ExprListOpt.unwrap_or_else(Vec::new);
-        inner.extend(ArgumentList);
-        inner
-    }
-};
-
-ExprListOpt: Option<Vec<AST>> = {
-    ExprList => Some(ExprList),
-    => None
-};
-ExprList: Vec<AST> = {
-    Expr Comma ExprList => {
-        let mut v = vec![Expr];
-        v.extend(ExprList);
-        v
-    },
-    Expr => vec![Expr]
-};
-
-PrimaryExpr: AST = {
-    Number => AST::Number(Number),
-    String => AST::StringLit(String),
-    Tag => AST::Tag(Tag),
-    Identifier => AST::Var(Identifier),
-    LambdaExpr => LambdaExpr,
-    TupleLiteral => TupleLiteral
-};
-
-LambdaExpr: AST = {
-    Lambda Pattern Arrow Expr => AST::Lambda(Pattern, Box::new(Expr))
-};
-
-TupleLiteral: AST = {
-    LParen TupleFields RParen => AST::Tuple(TupleFields)
-};
-
-TupleFields: Vec<(Option<String>, AST)> = {
-    TupleField Comma TupleFields => {
-        let mut v = vec![TupleField];
-        v.extend(TupleFields);
-        v
-    },
-    TupleField => vec![TupleField],
-    => vec![]
-};
-
-TupleField: (Option<String>, AST) = {
-    Identifier Colon Expr => (Some(Identifier), Expr),
-    Expr => (None, Expr)
-};
-
-// --- Patterns ---
-
-Pattern: Pattern = {
-    Tag => Pattern::Tag(Tag),
-    Identifier => Pattern::Var(Identifier),
-    Underscore => Pattern::Wildcard,
-    Number => Pattern::Number(Number),
-    String => Pattern::StringLit(String),
-    TuplePattern => TuplePattern
-};
-
-TuplePattern: Pattern = {
-    LParen PatternList RestOpt RParen => Pattern::Tuple(PatternList, RestOpt)
-};
-
-RestOpt: Option<String> = {
-    Comma RestPattern => Some(RestPattern),
-    => None
-};
-
-PatternList: Vec<Pattern> = {
-    Pattern Comma PatternList => {
-        let mut v = vec![Pattern];
-        v.extend(PatternList);
-        v
-    },
-    Pattern => vec![Pattern],
-    => vec![]
-};
-
-RestPattern: String = {
-    Identifier DotDot => Identifier
-};
+}
