@@ -4,18 +4,22 @@ use crate::lexer::Token;
 grammar;
 
 pub Program: Ast = {
-    <e:Expr> Eof => e,
-    <e:Expr> Newline Eof => e,
-}
+    Newline* <assigns:Assignment*> <e:Expr> Newline+ Eof => Ast::Program(assigns, Box::new(e)),
+};
+
+Assignment: Ast = {
+    <id:Ident> Assign <value:Expr> Newline+ => Ast::Assign(id, Box::new(value)),
+};
 
 Expr: Ast = {
-    <e:Expr> Plus <t:Term> => Plus(Box::new(e), Box::new(t)),
-    Term,
+    <l:Expr> Plus <r:Term> => Plus(Box::new(l), Box::new(r)),
+    <t:Term> => t,
 };
 
 Term: Ast = {
-    <n:Number> => Num(n)
-}
+    <n:Number> => Num(n),
+    <id:Ident> => Var(id),
+};
 
 extern {
     type Location = usize;

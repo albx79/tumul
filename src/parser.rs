@@ -14,7 +14,12 @@ pub fn parse(input: &str) -> Ast {
 
 #[test]
 fn test_parser() {
-    let src = "2 + 3 + 4";
+    let src = r"
+foo = 3
+bar = 4
+
+foo + bar + 2.0
+";
     let ast = parse(src);
     dbg!(ast);
 }

@@ -43,7 +43,9 @@ impl<'a> Iterator for Lexer<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.eof_emitted {
-            Some(self.next_token())
+            let tok = self.next_token();
+            dbg!(&tok);
+            Some(tok)
         } else {
             None
         }
@@ -92,11 +94,19 @@ impl<'a> Lexer<'a> {
             let current_indent = *self.indentation_stack.last().unwrap();
             if indent > current_indent {
                 self.indentation_stack.push(indent);
-                self.pending_tokens.push_back((self.current_pos, Token::Indent, self.current_pos + indent - current_indent));
+                self.pending_tokens.push_back((
+                    self.current_pos,
+                    Token::Indent,
+                    self.current_pos + indent - current_indent,
+                ));
             } else if indent < current_indent {
                 while indent < *self.indentation_stack.last().unwrap() {
                     self.indentation_stack.pop();
-                    self.pending_tokens.push_back((self.current_pos, Token::Dedent, self.current_pos + current_indent - indent));
+                    self.pending_tokens.push_back((
+                        self.current_pos,
+                        Token::Dedent,
+                        self.current_pos + current_indent - indent,
+                    ));
                 }
             }
 
@@ -105,7 +115,11 @@ impl<'a> Lexer<'a> {
             for tok in tokens {
                 self.pending_tokens.push_back(tok);
             }
-            self.pending_tokens.push_back((self.current_pos, Token::Newline, self.current_pos.inc()));
+            self.pending_tokens.push_back((
+                self.current_pos,
+                Token::Newline,
+                self.current_pos.inc(),
+            ));
 
             // 6. Return the next token (will be INDENT/DEDENTs first if present)
             return self.pending_tokens.pop_front().unwrap();
@@ -114,9 +128,11 @@ impl<'a> Lexer<'a> {
         // 7. At EOF: emit remaining DEDENTs before the Eof token
         while self.indentation_stack.len() > 1 {
             self.indentation_stack.pop();
-            self.pending_tokens.push_back((self.current_pos, Token::Dedent, self.current_pos));
+            self.pending_tokens
+                .push_back((self.current_pos, Token::Dedent, self.current_pos));
         }
-        self.pending_tokens.push_back((self.current_pos, Token::Eof, self.current_pos));
+        self.pending_tokens
+            .push_back((self.current_pos, Token::Eof, self.current_pos));
         self.eof_emitted = true;
         self.pending_tokens.pop_front().unwrap()
     }
@@ -267,35 +283,6 @@ fn lex_line_tokens(line: &str, pos: &mut usize) -> Vec<TokenPos> {
     tokens
 }
 
-#[test]
-fn test() {
-//     let src = r#"
-// foo = (x, y)
-// bar = \n -> (n, ())
-// baz = foo ! bar(2)
-// sequence = \t -> t ?
-//   () -> 0
-//   (h, t..) -> h + sequence(t..)
-// other() !
-//   fnc 1
-//   fnc 2 ?
-//     'ok -> -1.2
-//     'bad -> 3.14
-// "#;
-    let src = "2 + 3 + 4 + 5";
-    let mut lexer = Lexer::new(src);
-    loop {
-        let tok = lexer.next_token();
-        print!("{:?} ", tok);
-        if tok.1 == Token::Newline {
-            println!()
-        }
-        if tok.1 == Token::Eof {
-            break;
-        }
-    }
-}
-
 trait Inc {
     fn inc(&mut self) -> usize;
     fn tok_i_j(&mut self, tok: Token, i: usize, j: usize) -> TokenPos;
@@ -323,5 +310,41 @@ impl Inc for usize {
         let old = *self;
         *self += n;
         (old, tok, *self)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test() {
+        //     let src = r#"
+        // foo = (x, y)
+        // bar = \n -> (n, ())
+        // baz = foo ! bar(2)
+        // sequence = \t -> t ?
+        //   () -> 0
+        //   (h, t..) -> h + sequence(t..)
+        // other() !
+        //   fnc 1
+        //   fnc 2 ?
+        //     'ok -> -1.2
+        //     'bad -> 3.14
+        // "#;
+        let srcs = &["2 + 3 + 4 + 5", "foo = bar"];
+        for src in srcs {
+            let mut lexer = Lexer::new(src);
+            loop {
+                let tok = lexer.next_token();
+                print!("{:?} ", tok);
+                if tok.1 == Token::Newline {
+                    println!()
+                }
+                if tok.1 == Token::Eof {
+                    break;
+                }
+            }
+        }
     }
 }
