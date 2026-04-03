@@ -14,12 +14,15 @@ pub fn parse(input: &str) -> Ast {
 
 #[test]
 fn test_parser() {
-    let src = r"
+    let src = r#"
 foo = 3
 bar = 4
+baz = (2 + 3) * 4 / (foo - bar)
+my_string = "foobar"
+a_tag = 'ok
 
-foo + bar + 2.0
-";
+foo + bar + 2.0 * baz / "another string, with \"quotes\""
+"#;
     let ast = parse(src);
     dbg!(ast);
 }

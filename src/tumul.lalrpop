@@ -13,23 +13,34 @@ Assignment: Ast = {
 
 Expr: Ast = {
     <l:Expr> Plus <r:Term> => Plus(Box::new(l), Box::new(r)),
+    <l:Expr> Minus <r:Term> => Minus(Box::new(l), Box::new(r)),
     <t:Term> => t,
 };
 
 Term: Ast = {
+    <l:Term> Times <r:Factor> => Times(Box::new(l), Box::new(r)),
+    <l:Term> Div <r:Factor> => Div(Box::new(l), Box::new(r)),
+    <f:Factor> => f,
+};
+
+// Atoms: numbers, variables, parenthesis 
+Factor: Ast = {
     <n:Number> => Num(n),
     <id:Ident> => Var(id),
+    <s:String> => Str(s),
+    <t:Tag> => Tag(t),
+    LParen <e:Expr> RParen => e,
 };
 
 extern {
-    type Location = usize;
+    type Location = crate::lexer::Loc;
     type Error = String;
 
     enum Token {
-        Ident => Token::Ident(String),
-        Number => Token::Number(f64),
-        String => Token::String(String),
-        Tag => Token::Tag(String),
+        Ident => Token::Ident(<String>),
+        Number => Token::Number(<f64>),
+        String => Token::String(<String>),
+        Tag => Token::Tag(<String>),
         LParen => Token::LParen,
         RParen => Token::RParen,
         Comma => Token::Comma,
