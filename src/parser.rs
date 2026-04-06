@@ -23,6 +23,15 @@ a_tag = 'ok
 a_record = (foo: 1, bar: "hello", baz: (1, 2, 3), foo, bar, baz)
 empty_tuple = ()
 and_trailing_comma = (1, 2, 3,)
+a_block =
+  foo = "value"
+  bar = 42
+  bar + 2
+row_with_block = (foo: 1, bar: 2, baz:
+  tmp1 = 3
+  tmp2 = 4
+  tmp1 * tmp2
+)
 
 foo + bar + 2.0 * baz / "another string, with \"quotes\""
 "#;
