@@ -5,7 +5,7 @@ use crate::lexer::Token;
 grammar;
 
 pub Program: Ast = {
-    Newline* <block:BlockBody> Newline* Eof => block,
+    Newline* <asgns:Assignment*> <expr:Expr> Newline* Eof => Ast::Program(asgns, Box::new(expr)),
 };
 
 BlockBody: Ast = {
