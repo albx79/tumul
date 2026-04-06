@@ -5,15 +5,16 @@ use crate::lexer::Token;
 grammar;
 
 pub Program: Ast = {
-    Newline* <block:BlockBody> Newline* Eof => block,
+    Newline* <block:BlockBody> Eof => block,
 };
 
 BlockBody: Ast = {
-    <asgns:Assignment*> <expr:Expr> => Ast::Block(asgns, Box::new(expr)),
+    <asgns:Assignment*> <expr:Expr> Newline+ => Ast::Block(asgns, Box::new(expr)),
 };
 
 Assignment: Ast = {
     <id:Ident> Assign <value:Expr> Newline+ => Ast::Assign(id, Box::new(value)),
+    <id:Ident> Assign <value:BlockExpr> Newline+ => Ast::Assign(id, Box::new(value)),
 };
 
 Expr: Ast = {
@@ -29,7 +30,7 @@ Term: Ast = {
 };
 
 BlockExpr: Ast = {
-    Newline Indent BlockBody Dedent => BlockBody,
+    Newline Indent <b:BlockBody> Dedent => b,
 };
 
 CommaS<T>: Vec<T> = { // (1)

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::iter::Enumerate;
 use std::str::Lines;
+use log::debug;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -57,7 +58,7 @@ impl<'a> Iterator for Lexer<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if !self.eof_emitted {
             let tok = self.next_token();
-            dbg!(&tok);
+            debug!("{tok:?}");
             Some(tok)
         } else {
             None
