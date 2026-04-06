@@ -1,4 +1,5 @@
 use crate::ast::Ast::{self, *};
+use crate::ast::RowField;
 use crate::lexer::Token;
 
 grammar;
@@ -23,13 +24,30 @@ Term: Ast = {
     <f:Factor> => f,
 };
 
-// Atoms: numbers, variables, parenthesis 
+CommaS<T>: Vec<T> = { // (1)
+    <mut v:(<T> Comma)*> <e:T?> => match e { // (2)
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
+RowField: RowField = {
+    <name:Ident> Colon <e:Expr> => RowField::Named(name, Box::new(e)),
+    <e:Expr> => RowField::Unnamed(Box::new(e)),
+};
+
+RowFields = CommaS<RowField>;
+
+// Atoms: numbers, variables, parenthesis
 Factor: Ast = {
     <n:Number> => Num(n),
     <id:Ident> => Var(id),
     <s:String> => Str(s),
     <t:Tag> => Tag(t),
-    LParen <e:Expr> RParen => e,
+    LParen <fields:RowFields> RParen => Row(fields),
 };
 
 extern {

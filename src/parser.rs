@@ -20,6 +20,9 @@ bar = 4
 baz = (2 + 3) * 4 / (foo - bar)
 my_string = "foobar"
 a_tag = 'ok
+a_record = (foo: 1, bar: "hello", baz: (1, 2, 3), foo, bar, baz)
+empty_tuple = ()
+and_trailing_comma = (1, 2, 3,)
 
 foo + bar + 2.0 * baz / "another string, with \"quotes\""
 "#;
