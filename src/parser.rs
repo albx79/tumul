@@ -14,6 +14,7 @@ pub fn parse(input: &str) -> Ast {
 
 #[test]
 fn test_parser() {
+    env_logger::init();
     let srcs = &["
 foo = 3
 bar = 4
