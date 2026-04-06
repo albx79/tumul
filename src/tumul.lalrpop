@@ -16,12 +16,17 @@ Expr: Ast = {
     <l:Expr> Plus <r:Term> => Plus(Box::new(l), Box::new(r)),
     <l:Expr> Minus <r:Term> => Minus(Box::new(l), Box::new(r)),
     <t:Term> => t,
+    BlockExpr,
 };
 
 Term: Ast = {
     <l:Term> Times <r:Factor> => Times(Box::new(l), Box::new(r)),
     <l:Term> Div <r:Factor> => Div(Box::new(l), Box::new(r)),
     <f:Factor> => f,
+};
+
+BlockExpr: Ast = {
+    Newline Indent <asgns: Assignment*> <e: Expr> Dedent => Ast::Block(asgns, Box::new(e)),
 };
 
 CommaS<T>: Vec<T> = { // (1)
