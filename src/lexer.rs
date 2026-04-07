@@ -120,6 +120,10 @@ impl<'a> Lexer<'a> {
                     );
                 }
             }
+            // 4.1 After dedenting, emit a Newline to separate blocks/statements
+            if indent < current_indent {
+                self.pending_tokens.push_back(self.current_loc.tok_inc(Token::Newline));
+            }
 
             // 5. Now emit tokens for this line, then NEWLINE
             let tokens = lex_line_tokens(line, &mut self.current_loc);

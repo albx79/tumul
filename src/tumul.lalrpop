@@ -8,13 +8,13 @@ pub Program: Ast = {
     Newline* <asgns:Assignment*> <expr:Expr> Newline* Eof => Ast::Program(asgns, Box::new(expr)),
 };
 
-BlockBody: Ast = {
-    <asgns:Assignment*> <expr:Expr> => Ast::Block(asgns, Box::new(expr)),
-};
-
 Assignment: Ast = {
     <id:Ident> Assign <value:Expr> Newline+ => Ast::Assign(id, Box::new(value)),
     <id:Ident> Assign <value:BlockExpr> Newline+ => Ast::Assign(id, Box::new(value)),
+};
+
+BlockBody: Ast = {
+    <asgns:Assignment*> <expr:Expr> => Ast::Block(asgns, Box::new(expr)),
 };
 
 Expr: Ast = {
