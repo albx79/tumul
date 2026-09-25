@@ -96,7 +96,7 @@ Never = []
 
 ### 3.3 Top type
 
-The language has no universal/top type. `!A` is meaningful only relative to a bounding domain (§4.4); there is deliberately no type inhabited by every value in the language, and no single type that accepts any argument (see §24 for the discussion of why this was not pursued).
+The language has no universal/top type, and this is a deliberate, settled decision rather than an open gap. `!A` is meaningful only relative to a bounding domain (§4.4); there is no type inhabited by every value in the language, and no single type that accepts any argument. The motivating use cases were considered and did not hold up: a universally-accepting function such as `print : Any -> Text` was rejected as not meaningful (printing a function or closure has no defined behavior), and XOR types (§4.5) turned out not to need a top at all, since `A ^ B`'s negation is always immediately bounded by `A | B`. Constructing a global top would also require a separate, disjoint infinite primitive for symbols (unbounded by name, not by structure, and not reachable via the recursive-tuple/arrow mechanism of §3a) on top of records, tuples, and functions — should a concrete need for global negation arise later, that unification is the open work, not a small addition.
 
 ## 4. Union, intersection, and negation
 
@@ -1088,9 +1088,9 @@ for_each : {
 
 The loop itself contributes no effect; effects from the body propagate.
 
-### 17.2 Optional `for` syntax
+### 17.2 No dedicated `for` syntax
 
-A `for` construct, if provided, can be syntax sugar for a library function rather than a keyword:
+There is no `for` construct. Iteration is expressed entirely through library functions such as `for_each`, `map`, and `fold` (§17.1); a hypothetical
 
 ```text
 for color in colors {
@@ -1098,7 +1098,7 @@ for color in colors {
 }
 ```
 
-could elaborate to:
+is written directly as:
 
 ```text
 for_each {
@@ -1107,7 +1107,7 @@ for_each {
 }
 ```
 
-Whether such syntax exists is **TBD**.
+This keeps the "no reserved word keywords" principle (§1) uncomplicated by a special-cased loop form, at the cost of that one extra layer of syntax for the common case.
 
 ### 17.3 Iteration effect
 
@@ -1473,22 +1473,16 @@ Note that recursion through an arrow type's output, as permitted by §3a.1, is w
 ## 24. Intentionally unresolved questions
 
 1. Exact import grammar after `@`.
-2. Exact syntax for open and closed empty record/tuple types beyond the notation fixed in §9.4 (`{}`/`()` vs `{.}`/`(.)`) — e.g. whether any shorthand is needed.
-3. Closed-row semantics in the presence of inaccessible private fields — resolved in outline by the three-state row model (§7.3a) and the close operator (§8.4a); the exact typing rules for `.*` still need to be spelled out formally (what type it assigns in each of the open / closed-public / closed-total cases).
-4. Whether type declarations use `=` or a separate punctuation form.
-5. Type-level reflection syntax for enumerations.
-6. Enumeration order and duplicate-member behavior.
-7. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order) and the desugaring rule from numeral literals to `Number` values.
-8. Exact pattern grammar and binding behavior.
-9. Whether a final bare identifier pattern is always a catch-all binding.
-10. Whether general effect declarations are available in version one.
-11. Syntax and semantics for resumable handlers and continuation binding — expected to use arrow-guarded recursive types (§3a.1, §3a.5), exact form TBD.
-12. Exact syntax for generic `Raise` operations.
-13. Private-module visibility boundaries.
-14. Whether `for` syntax exists or is entirely library-based.
-15. Whether top-level declarations may be mutually recursive — resolved: yes, subject to the guardedness condition of §3a.1–§3a.2.
-16. Whether public values can explicitly hide or project fields.
-17. Exact static semantics of finite enumeration reflection.
-18. A global top type (`Any`/`Top`) was considered and deliberately not adopted: the one concrete motivating use case (a universally-accepting function such as `print : Any -> Text`) was rejected as not meaningful (what does it mean to print a function or closure?), and the other motivating case (XOR types) turned out not to need one, since `A ^ B` only ever uses negation inside an intersection with `A | B` (§4.5), which never requires a domain wider than the two operands. Constructing a global top would additionally require resolving a separate, disjoint infinite primitive for symbols (unbounded by name, not by structure, and not reachable via the recursive-tuple/arrow mechanism of §3a) on top of records, tuples, and functions. This remains open only in the sense that if a concrete need for global negation arises, the construction would need function-top, symbol-top, and record/tuple-top unified, each independently justified.
-19. Rejected: deriving a numeric universe by scanning the largest range literal across all modules in a build. This does not bound `Number`, which is unbounded by definition and can't be bounded by any finite scan; and it violates §18.6's requirement that a module's meaning not depend on unrelated modules elsewhere in the build graph, since adding an unrelated module could silently enlarge the inferred universe and change type-checking results elsewhere.
-20. Formal typing rules for `.*` (item 3, restated precisely): given a value of static type `T`, what is the type of `T.*`, in each of the open / closed-public / closed-total cases, for both records and tuples.
+2. Whether type declarations use `=` or a separate punctuation form.
+3. Type-level reflection syntax and static semantics for enumerations — what `values`, `size`, `ordinal`, and friends (§5.5) actually look like at the type-checking level, not just which operations should exist.
+4. Enumeration order and duplicate-member behavior.
+5. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order) and the desugaring rule from numeral literals to `Number` values.
+6. Exact pattern grammar and binding behavior — narrowed by §9.1a/§13.3 (tuple and record patterns are confirmed as separate productions, never collapsing into one), but the rest of the grammar (literals in patterns, nested patterns, guards) is untouched.
+7. Whether a final bare identifier pattern is always a catch-all binding.
+8. Whether general effect declarations are available in version one.
+9. Syntax for resumable handlers and continuation binding — narrowed by §16.5/§3a.5: the continuation's *type* is settled (an arrow-guarded recursive type, `Cont A = A -> (Result | Cont A)`), but the handler syntax for receiving and invoking `resume` is still open.
+10. Exact syntax for generic `Raise` operations.
+11. Private-module visibility boundaries.
+12. Formal typing rules for the close operator `.*` (§8.4a): given a value of static type `T`, what is the type of `T.*`, in each of the open / closed-public / closed-total cases, for both records and tuples. (The operator's existence and module-relative behavior are settled; only the formal typing derivation remains.)
+
+Resolved since the previous revision and removed from this list: the empty record/tuple notation (§9.4), whether top-level declarations may be mutually recursive (§3a.1–3a.2, yes), whether public values can explicitly hide or project fields (yes, via `.*`, §8.4a), the global top type (deliberately not adopted, §3.3), deriving a numeric universe from whole-program range literals (rejected, §18.6), and whether a dedicated `for` syntax exists (no, §17.2).
