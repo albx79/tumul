@@ -38,9 +38,9 @@ The token `//` is reserved for effect annotations and effect handling.
 
 Naming conventions are part of the grammar:
 
-- **Type identifiers:** PascalCase, for example `Int`, `Text`, `UserId`.
+- **Type and namespace identifiers:** PascalCase. These name types (`Int`, `Text`, `UserId`), module aliases (`Toml`, §18.3), and effects (`IO`, `Raise`, §14). `Name.member` is always namespace access: an operation of an effect, or a declaration of an aliased module.
 - **Value identifiers:** lowercase snake_case, for example `parse_text`, `user_id`.
-- **Private fields:** names beginning with `_`, for example `_brand`.
+- **Private names:** names beginning with `_`. These are private fields (`_brand`, §8), private top-level declarations (`_helper`, `_Token`, §18.5), and private modules (`_internal`, §18.5).
 - **Symbols:** a leading apostrophe introduces a symbol literal, for example `'true`.
 
 A symbol is a value whose identity is determined by its name. Symbols are not pattern variables.
@@ -68,6 +68,7 @@ A & B        # intersection
 A ^ B        # symmetric difference ("XOR type"; sugar, see §4.5)
 A -> B       # pure function
 A -> B // E   # effectful function
+List(A)      # type application (§11.2)
 ```
 
 Types denote sets of values.
@@ -330,7 +331,7 @@ Because private fields (§8) can be invisibly present on an otherwise-closed rec
 - **closed-public** — no additional *public* fields exist, but private fields (from the defining module, or from a module that produced the value via spread) may still be present, invisibly, to code outside their defining module.
 - **closed-total** — no additional fields exist at all, of any kind. This is a strictly stronger guarantee than closed-public, and holds only when a value is provably free of private fields — for instance, when built directly from a literal with no spread from a branded source (§7.4), or when observed from inside the module that defines all of its private fields.
 
-The `.` marker in type position denotes closed-public in general, degenerating to closed-total exactly when no private fields can be present. The distinction matters most for equality (§19) and the close operator (§8.4a).
+The `.` marker in type position denotes closed-public in general, degenerating to closed-total exactly when no private fields can be present. The distinction matters most for equality (§19) and the close operator (§8.4a); §8.4b gives closed-total a precise, recursive characterization (`Close(T) = T`) rather than leaving it at the informal description above.
 
 Tuples have no analogue of this three-way split; see §9.1a.
 
@@ -418,6 +419,8 @@ Public fields remain accessible:
 user_id.text
 ```
 
+These restrictions apply to the defining module's own submodules too. Private *declarations* (top-level `_` names and `_` modules) are visible to descendant modules (§18.5), but private *field labels* are not: a `_brand` written in module `auth/session` always denotes the label `(auth/session, _brand)`, never a `_brand` of its ancestor `auth`. The reason is that field labels are not declared anywhere; they exist wherever they are written. If a label written in a child could resolve to an ancestor's label, its meaning would depend on which labels happen to be used elsewhere in the ancestor's subtree, and adding a `_brand` to an unrelated part of `auth` could silently change what the child's code refers to. A descendant works with an ancestor's private fields through private helper functions the ancestor declares, which it can see. An explicit, module-qualified syntax for naming an ancestor's field labels may be added later (§24).
+
 ### 8.3 Structural branding
 
 Private fields provide unforgeable structural brands without making the enclosing type fully nominal.
@@ -431,7 +434,7 @@ UserId = {
 }
 ```
 
-Code outside the defining module cannot construct a value satisfying the private `_brand` field.
+Code outside the defining module cannot construct a value satisfying the private `_brand` field. This includes the defining module's own descendants (§8.2); they create branded values only through functions the defining module provides, so every branded value is still created by code in the defining module.
 
 A branded value may still be usable as a public structural supertype, and public fields remain structurally visible. From outside the defining module, `UserId`'s effective visible type is closed-public, not closed-total (§7.3a): the `_brand` field is real but unnameable, so external code must not assume the record has exactly one field.
 
@@ -465,6 +468,82 @@ is_foo = { text: "foo" } == user.*
 Outside `Auth` (the module defining `UserId`), `_brand` is not statically visible, so `user.*` erases it, producing a closed-total `{text: Text, .}` comparable against the literal. Inside `Auth`, the same operation on the same value preserves `_brand`, since it is visible there — `.*` gives different results at different points in the source not because it inspects the value differently, but because it always follows what is nameable at that point, and privacy already restricts that per §8.2. No special-casing of privacy is required in `.*`'s definition itself.
 
 `.*` is the general "close to statically-known shape" operator for both records (keyed by name) and tuples (keyed by position); it is what allows a non-final tuple spread's length to be pinned down explicitly (§9.5) and what allows `==` to accept operands that are not already closed-total (§19).
+
+### 8.4b Formal typing rule for `.*`
+
+Given a value expression `e` with static type `T`, the type of `e.*` is computed by a type-level operation, written `Close(T)` here. `Close` is what §8.4a's "erase to the statically-declared shape" means made precise; it never inspects a runtime value, only the type the checker assigns to the result of `.*`.
+
+`Close` works on the row (record or tuple) that `T` denotes **at the point of use** — i.e., after visibility (§8.2) has already been applied, so a private field not nameable at the call site is simply absent from the row `Close` starts from, and one that is nameable there is present:
+
+1. **Record row.** If, at the point of use, `T`'s row is `{f_1: A_1, ..., f_n: A_n}` (whether written open or closed-public — the row-state itself plays no further part):
+
+   ```text
+   Close(T) = { f_1: Close(A_1), ..., f_n: Close(A_n), . }
+   ```
+
+   The result is always written closed, and is provably closed-total (§7.3a): every field not among `f_1, ..., f_n` — public or private, known or hidden — has been discarded, and every remaining field's own type has itself been closed, recursively.
+
+2. **Tuple row.** Symmetrically, if `T`'s row is `(A_0, ..., A_{k-1})`:
+
+   ```text
+   Close(T) = (Close(A_0), ..., Close(A_{k-1}), .)
+   ```
+
+3. **Union.** `Close(A | B) = Close(A) | Close(B)` — a union of closed-total arms is closed-total; whichever arm a given runtime value inhabits, it is that arm's row that gets closed.
+
+4. **Intersection.** An intersection of record or tuple types is reduced to its merged row (§4.2, §7.2) before rule 1 or 2 applies; `Close` needs no separate intersection case.
+
+5. **Named row types.** A declared name such as `UserId` is unfolded once, to the row visible at the point of use, and rules 1–2 recurse into its fields exactly as for a written-out row literal. This is what lets `.*` do anything at all on a value declared with a named type, rather than treating the name as opaque — it is exactly what §8.4a's worked example relies on.
+
+6. **Recursive types — termination.** Record and tuple field types may themselves be recursive (§3a), so rule 5 must not unfold the same named type twice along one recursion path, or `Close` would not terminate. The rule: once a named type has been unfolded during a given application of `Close`, a second, nested occurrence of that same name along the same path is left as-is — `Close` stops there rather than unfolding it again. This is the same state-repetition criterion that already makes subtyping over recursive types decidable (§3a.4, via automaton emptiness); `Close` reuses it rather than needing a separate termination argument.
+
+   This gives, as a direct consequence rather than a separate design choice, the right scope for library containers built from recursion (§3a.5). For `List(A) = () | (A, List(A), .)`:
+
+   ```text
+   Close(List(A)) = (.) | (Close(A), List(A), .)
+   ```
+
+   The head element's type is closed, one level; the tail (`List(A)`, the same name reappearing) is left untouched, because unfolding it again is exactly the repeated occurrence rule 6 forbids. `.*` therefore closes a value's own shape, plus whatever record/tuple structure is nested directly inside it — but it does not walk an unbounded list, string, or other recursive container closing every element in turn. Closing every element of a `List({x: Int})`, for instance, is a `map (\e -> e.*) list` away, not something `.*` does by itself on the list as a whole. This boundary is not an ad hoc restriction picked for this operator specifically; it falls directly out of reusing rule 6's termination criterion, already justified independently in §3a.4.
+
+7. **Everything else.** A type with no row to close — a primitive, an enumeration or range, a symbol type, or a function (arrow) type — is left unchanged: `Close(A) = A`. This includes a function type's own argument and result types; `.*` does not recurse into what a function accepts or produces, since a function value has no observable row of its own for `.*` to act on.
+
+**Closed-total, restated precisely.** §7.3a's three-state model can now be stated as: `T` is closed-total exactly when `Close(T) = T` — `T` is already a fixed point of closing, so `.*` on a value of that type is a genuine no-op. `Close` is idempotent in general (`Close(Close(T)) = Close(T)`) for the same reason: whatever `Close` produces is, by construction, already stable under a further application. This is also the precise form of the requirement `==` imposes on its operands (§19): an operand's type must satisfy `Close(T) = T`, not merely "look closed at the top level" — a record with an open field is not closed-total by this definition even if its own row has a trailing dot, and `==` on it remains a type error until `.*` is applied.
+
+**Worked examples.**
+
+```text
+UserId = { _brand: (), text: Text }   # declared inside module Auth
+```
+
+Outside `Auth`, `_brand` is not nameable, so the row visible at that point is `{text: Text}`:
+
+```text
+Close(UserId) = { text: Close(Text), . } = { text: Text, . }     # (outside Auth)
+```
+
+Inside `Auth`, `_brand` is visible, so:
+
+```text
+Close(UserId) = { _brand: Close(()), text: Close(Text), . }
+              = { _brand: (), text: Text, . }                    # (inside Auth)
+```
+
+For a non-final tuple spread operand of open type `(Int, Text)` (§9.5):
+
+```text
+Close((Int, Text)) = (Close(Int), Close(Text), .) = (Int, Text, .)
+```
+
+For a record with a nested open field, with no private fields anywhere:
+
+```text
+T = { a: { x: Int }, y: Text }
+
+Close(T) = { a: Close({x: Int}), y: Close(Text), . }
+         = { a: { x: Int, . }, y: Text, . }
+```
+
+`a`'s value has any extra fields beyond `x` discarded too, one level down — the recursive case of the same "no runtime inspection, follows the static type" principle §8.4a already states for the shallow, single-level case.
 
 ### 8.5 Equality and privacy
 
@@ -658,6 +737,21 @@ Port = 1..65535
 
 The capitalization convention distinguishes type declarations from value declarations. Type declarations may be self-referential or mutually recursive, subject to the guardedness condition of §3a.
 
+### 11.3 Type parameters
+
+A type declaration may take type parameters, written as a parenthesized, comma-separated list after its name. The parameters are type identifiers (§2.2), bound by the declaration and in scope in its right-hand side:
+
+```text
+List(A) = () | (A, List(A), .)
+Pair(A, B) = (A, B, .)
+```
+
+A parameterized type is used by applying it to type arguments in the same form: `List(Int)`, `Pair(Int, Text)`. Effects take parameters the same way: `Raise(ParseError)` (§14.7).
+
+The argument list is not a tuple type. `Pair(Int, Text)` is `Pair` applied to two arguments, not to the tuple type `(Int, Text)`. To keep the two apart, this is the only form of type application: there is no juxtaposition form such as `List(Int)`.
+
+This is one deliberate asymmetry with values. Every function takes exactly one argument (§10.1), and several conceptual arguments are one record or tuple. A type constructor may take several parameters, because types are not values and a parameter list is not a tuple.
+
 ## 12. Struct literals as scoped computation
 
 ### 12.1 Sequential field scope
@@ -809,6 +903,8 @@ direction ? {
 }
 ```
 
+**Arm order.** Arms are tried in order, and the first arm whose pattern matches is taken. Patterns may overlap; order decides which arm wins.
+
 **Type of a `?`-expression.** Each arm's right-hand-side expression may have a different type. The type of the overall `?`-expression is the union of the arms' types — `pattern_1 -> e_1, ..., pattern_n -> e_n` has type `T_1 | ... | T_n`, where `T_i` is the type of `e_i` — with no merging or collapsing across arms. In particular, when arms are struct literals with different fields, the result is a union of the (closed, per §7.4) record types of each arm, not a single record type with field-level optionality:
 
 ```text
@@ -829,44 +925,139 @@ This is sugar for matching over the Boolean enumeration, and inherits the union-
 
 ### 13.3 Patterns
 
-Patterns include:
+A pattern denotes a set of values, exactly as a type does, together with a set of names it binds. Patterns are built from the forms below; the identifier categories of §2.2 decide which form an identifier is, so no scope lookup is ever needed to read a pattern.
 
-- symbols;
-- enumeration members;
-- tuple patterns;
-- record patterns;
-- wildcard `_`;
-- binding identifiers.
+| Pattern | Matches | Binds |
+|---|---|---|
+| `_` | any value | nothing |
+| `name` (lowercase) | any value | `name` |
+| `'sym` | the symbol `'sym` | nothing |
+| literal, e.g. `0`, `"yes"` | that value (a singleton type) | nothing |
+| `TypeName` (PascalCase), or any type expression such as `1..9`, `[1, 2, 3]`, `!Int` | values of that type (a **type test**) | nothing |
+| `(p_0, ..., p_k)` | tuples with at least these positions, each matching its `p_i` | the bindings of each `p_i` |
+| `(p_0, ..., p_k, .)` | tuples with exactly these positions | as above |
+| `{ f_1: p_1, ..., f_n: p_n }` | records with at least these fields, each matching its `p_i` | the bindings of each `p_i` |
+| `{ f_1: p_1, ..., f_n: p_n, . }` | records with exactly these visible fields | as above |
+| `p & q` | values matching both `p` and `q` | the bindings of both |
+| `p \| q` | values matching `p` or `q` | the names bound on both sides (which must be the same) |
 
-Tuple patterns and record patterns are kept as separate pattern productions (rather than one collapsing into the other), consistent with tuples and records being distinct type formers (§9.1a).
+Rules:
 
-An unquoted identifier in pattern position is a binding pattern:
+- **Casing decides the form.** A lowercase identifier is always a binding, a PascalCase identifier is always a type test, and a quoted symbol is always a constant. An unquoted identifier never refers to an existing value, so a binding never accidentally compares against a constant in scope, and a constant never accidentally becomes a binding.
+- **Record shorthand.** In a record pattern, a field written alone binds a name equal to the field: `{ left, right }` means `{ left: left, right: right }`. This is the form used by named-function parameters (§10.2).
+- **Open and closed.** Record and tuple patterns are open by default and closed with a trailing `.`, exactly as record and tuple types are (§7.2, §7.3, §9.2, §9.3). Tuple and record patterns are separate productions, consistent with tuples and records being distinct type formers (§9.1a).
+- **Privacy.** A record pattern may name a private field only inside its defining module (§8.2). For the same reason, a type test against a type whose definition has private fields not visible at that point is a type error: it would observe the private field. Outside the defining module, such values are told apart by their visible structure or by narrowing (§13.4).
+- **Conjunction.** `p & q` is how a value is both tested and bound: `n & Int` matches an `Int` and binds it to `n`. The same name may not be bound on both sides.
+- **Disjunction.** In `p | q`, both sides must bind the same set of names. A name bound on both sides has the union of its types from each side.
+- **Precedence.** `&` binds tighter than `|`, as in types (§3.1). Parentheses group, as in `n & (Int | Text)`.
+- **No arrow types in type tests.** A type test must be decidable from the value itself. Membership of a function value in an arrow type cannot be checked at runtime, so a type test naming an arrow type is a type error.
 
-```text
-value
-```
-
-A quoted symbol is a constant pattern:
-
-```text
-'true
-```
-
-### 13.4 Catch-all patterns
-
-The wildcard pattern matches anything:
-
-```text
-_ -> fallback
-```
-
-A final identifier pattern may bind the matched value:
+Example:
 
 ```text
-value -> value
+describe : (Int | Text | 'none) -> Text =
+  \x -> x ? {
+    'none   -> "nothing",
+    0       -> "zero",
+    n & Int -> string(n),
+    t       -> t
+  }
 ```
 
-The exact rules for catch-all bindings and exhaustiveness checking are **TBD**.
+The last arm's `t` has type `Text`; see §13.4.
+
+### 13.3a Rest patterns
+
+A rest pattern is the mirror image of a spread (§7.5, §9.5): where a spread puts the contents of one value into a larger one, a rest pattern takes a value apart and binds whatever the other sub-patterns did not name.
+
+```text
+{ x, ..others }      # record: binds x, and a record of all the other fields
+(head, ..tail)       # tuple: binds position 0, and a tuple of all the later positions
+```
+
+Rules, common to both kinds:
+
+- `..` in a pattern is followed by a binding identifier (or `_`), not by a general pattern.
+- A pattern contains at most one rest, and it must be the last element.
+- A pattern with a rest is open by nature (it matches any number of further fields or positions), so it cannot also carry a trailing `.`.
+
+**Records.** `{ f_1: p_1, ..., f_n: p_n, ..r }` matches any record with at least the fields `f_1, ..., f_n`, and binds `r` to a record holding every other field that is **visible at this point**. As with spread (§8.4), private fields of another module are not visible, so they are not captured: they are dropped, exactly as a spread would drop them. The module's own private fields are visible and are captured.
+
+If the value reaching the arm (§13.4) has type:
+
+```text
+{ f_1: A_1, ..., f_n: A_n, g_1: B_1, ..., g_m: B_m }      # open
+```
+
+then:
+
+```text
+r : { g_1: B_1, ..., g_m: B_m }          # open: unknown further fields go into r
+```
+
+and if it is closed (`..., .`), then:
+
+```text
+r : { g_1: B_1, ..., g_m: B_m, . }       # closed-total
+```
+
+The closed case gives a closed-total `r`, not merely closed-public (§7.3a), because the only fields a closed-public row can hide are private fields of other modules, and those are precisely the ones the rest pattern drops. When nothing is left over, `r : {.}`.
+
+**Tuples.** `(p_0, ..., p_{k-1}, ..t)` matches any tuple with at least `k` positions, and binds `t` to a tuple of the remaining positions, renumbered from `0`. If the value reaching the arm has type `(A_0, ..., A_{m-1})`, then `t : (A_k, ..., A_{m-1})`, open or closed as that type is. Tuples have no private positions (§9.1a), so nothing is dropped.
+
+**Round trip.** Because rest is the mirror of spread, using the same shape as a literal rebuilds the value:
+
+```text
+v ? { { x, ..r } -> { x, ..r } }         # equals v, minus other modules' private fields
+v ? { (h, ..t)   -> (h, ..t) }           # equals v exactly
+```
+
+The tuple case is well-typed even when `t` is open, because the spread is in final position (§9.5).
+
+### 13.4 Narrowing
+
+The type of a binding is the type of the values that can actually reach it. If the scrutinee has type `S` and the arms' patterns are `p_1, ..., p_n`, then the values that reach arm `i` are exactly:
+
+```text
+S_i = S & p_i & !(p_1 | ... | p_{i-1})
+```
+
+treating each pattern as the type it denotes. A binding in arm `i` has the type of its position within `S_i`.
+
+**Bindings must be bounded.** Because there is no top type (§3.3), a binding needs a type that `S_i` actually determines. Binding a field or tuple position that the scrutinee's type does not mention, only admits through openness, is a type error, since that component could hold anything and "anything" has no type. Bounding it with a type test fixes this:
+
+```text
+v : { x: Int }            # open: v may have a field y, of unknown type
+
+v ? { { x, y }         -> ... }    # type error: y's type is unbounded
+v ? { { x, y: n & Int } -> ... }   # fine: n : Int, and the arm matches only if y is an Int
+v ? { { x, ..r }       -> ... }    # fine: r : {} (unknown fields stay inside r's openness)
+```
+
+The last line shows why rest patterns (§13.3a) never have this problem: unknown components are captured as the openness of the rest binding, not given a type of their own. This is the same principle as for negation (§4.3): the type of anything must be bounded by something already known.
+
+In particular, a bare identifier as the last arm is a catch-all whose type is whatever the earlier arms did not take:
+
+```text
+x : Int | Text | 'none
+
+x ? {
+  'none -> ...,
+  Int   -> ...,
+  rest  -> ...     # rest : Text
+}
+```
+
+This is negation used within a bounding domain, as §4.3 requires: the domain is the scrutinee type `S`, so narrowing never needs a global top type.
+
+### 13.5 Exhaustiveness and redundancy
+
+Both checks are subtyping questions (§4.4) and use the same decision procedure as the rest of the type system (§3a.4).
+
+- **Exhaustiveness.** A match is exhaustive when `S <: p_1 | ... | p_n`. A non-exhaustive match is a type error: the value of a `?`-expression must be defined for every value of its scrutinee.
+- **Redundancy.** Arm `i` is redundant when `S_i = []`: no value can reach it. A redundant arm is a type error.
+
+A bare identifier or `_` matches everything, so it makes any match exhaustive, and any arm after it is redundant. A bare identifier is an ordinary, irrefutable binding wherever it appears, not only in the last arm; placing arms after it is simply an instance of the redundancy rule.
 
 ## 14. Effects
 
@@ -892,7 +1083,7 @@ A function with no effects may omit the annotation.
 Effect sets use `|`:
 
 ```text
-A -> B // IO | Raise(Error)
+A -> B // IO | Raise(ParseError)
 ```
 
 This means the computation may perform either effect.
@@ -903,7 +1094,7 @@ Effects describe observable interaction or control behavior during evaluation. E
 
 ```text
 IO
-Raise(Error)
+Raise(E)      # for any type E, §14.7
 Crash
 Random
 Clock
@@ -961,6 +1152,25 @@ g ∘ f : A -> C // E1 | E2
 
 A scoped struct has the union of the effects of its reachable field expressions.
 
+### 14.6 Built-in effects only
+
+Version one has no user-defined effects. The effects available are a fixed set provided by the language and standard library, those listed in §14.3. The exact set, and the signatures of their operations, are **TBD** (§24). Programs handle these effects (§16), including resuming them (§16.5), but cannot declare new ones.
+
+### 14.7 `Raise`
+
+`Raise` takes one type parameter, the type of the value raised. Any type may be raised; there is no special error supertype:
+
+```text
+Raise.raise : E -> Never // Raise(E)
+```
+
+Two rules connect `Raise` to effect sets:
+
+- **Merging.** `Raise(A) | Raise(B)` is the same effect as `Raise(A | B)`. A computation that may raise either kind of value has one `Raise` effect, and a handler clause `Raise.raise(error) -> ...` receives `error : A | B`.
+- **Subtyping.** `Raise(A) <: Raise(B)` when `A <: B`. This follows from effect inclusion (§14.4) together with merging: `Raise(A) | Raise(B)` is `Raise(B)` when `A <: B`.
+
+The result type of `Raise.raise` is `Never`, i.e. `[]` (§3.2), which is what makes it abortive (§16.5).
+
 ## 15. Effect operations
 
 An effect operation may look like an ordinary function call:
@@ -971,12 +1181,12 @@ Random.next_int(range)
 IO.read_file(path)
 ```
 
-The compiler knows from the operation declaration that the call performs an effect. The exact syntax for declaring user-defined effects and operations is **TBD**.
+The compiler knows from the operation's built-in declaration that the call performs an effect. There are no user-defined effects in version one (§14.6).
 
-A non-resumable raise operation may have a type conceptually like:
+Like every function, an operation takes exactly one argument (§10.1). For example:
 
 ```text
-Raise.raise : Error -> Never // Raise(Error)
+Raise.raise : E -> Never // Raise(E)
 ```
 
 ## 16. Effect handlers
@@ -1024,7 +1234,7 @@ implicitly passes through a successful result.
 
 ### 16.3 Handling `Raise`
 
-`Raise` is abortive and non-resumable. If it is handled, execution does not continue after the original raise point.
+`Raise` is abortive: its result type is `Never` (§14.7), so it can never be resumed (§16.5). If it is handled, execution does not continue after the original raise point.
 
 ### 16.4 Converting errors to ordinary data
 
@@ -1051,19 +1261,101 @@ Int | ParseError
 
 ### 16.5 Resumable effects
 
-Future effects may be resumable. A handler may receive a continuation:
+When an operation is handled, the handler clause can receive a continuation which, when called with a value, continues the original computation as if the operation call had returned that value.
+
+Whether an operation can be resumed is decided by its type, not by a declaration. For an operation `Op : P -> Q`, the continuation has type `Q -> R` (§16.5.2). If `Q` is `Never`, i.e. `[]` (§3.2), no value exists to call it with, so the operation can never be resumed: it is **abortive**. Every operation whose result type is inhabited is **resumable**. `Raise.raise`, with result type `Never` (§14.7), is the standard abortive operation.
+
+An implementation never needs to capture a continuation for an operation whose result type is `Never`, since it is statically known that none can be used.
+
+### 16.5.1 Clause syntax
+
+A clause may bind the continuation with a second, comma-separated binding after the operation pattern. For example, a test can supply the contents of a file instead of reading it:
 
 ```text
-Ask.get_name(prompt, resume) -> resume("Ada")
+load_config { path: "app.toml" } // {
+  IO.read_file(path), resume -> resume("port = 8080"),
+}
 ```
 
-A resumable continuation is naturally typed using recursive, arrow-guarded types (§3a): a continuation that may itself be resumed into another resumable point needs a self-referential type of roughly the shape
+The left-hand side of such a clause has the form:
 
 ```text
-Cont A = A -> (Result | Cont A)
+operation_pattern, resume_binding -> handler_expression
 ```
 
-i.e. "given an `A`, produce either a final result or another continuation expecting another `A`." The exact syntax and semantics for resumable handlers, including how such a continuation type is spelled in this language, are **TBD**, but the arrow-guarded recursion permitted by §3a.1 is expected to be the mechanism.
+Rules:
+
+- `resume_binding` is a binding identifier or `_`, not a general pattern: the continuation is a function value, and no structural pattern (§13.3) can match against one.
+- This two-part form is a production of handler clauses only. It is not an extension of the general pattern grammar; tuple patterns elsewhere are unaffected.
+- On the completion clause (§16.2) the second binding is a type error: a computation that has completed has no continuation.
+- On a clause for an abortive operation such as `Raise.raise`, the second binding is permitted but useless: the continuation has type `[] -> R` and can never be called.
+- The second binding is optional. A clause that omits it (or binds `_`) does not resume; its value becomes the result of the whole handled expression, exactly as for an abortive operation.
+
+Once bound, `resume` is an ordinary unary function (§10.1) and is called with ordinary application, e.g. `resume("port = 8080")`.
+
+Note the position of the comma. `IO.read_file(path), resume` binds the operation's single argument through `operation_pattern` and the continuation separately. It must not be confused with the form `IO.read_file(path, resume)`, an earlier sketch which was rejected: it implied that the continuation is a second argument of the operation, whereas every operation, like every function, takes exactly one argument (§10.1), and the continuation is supplied by the handler mechanism, not by the call.
+
+### 16.5.2 Deep handlers
+
+Handlers are **deep**. When a clause calls `resume`, the resumed computation remains under the same handler: any further operations it performs are handled by the same clauses. Consequently, `resume` returns the final result of the whole handled expression, not the next suspension point.
+
+Typing. Let the handled expression be:
+
+```text
+h = e // { clauses }
+```
+
+and let `R` be the type of `h`: the union of the result types of all its clauses, including the completion clause (or, if there is no completion clause, of `e`'s own result type), per the union rule of §13.1. In a clause for an operation:
+
+```text
+Op : P -> Q // E_op
+```
+
+the bound continuation has type:
+
+```text
+resume : Q -> R // E
+```
+
+where `E` is the effect set of `h` itself: whatever effects of `e` this handler does not handle, plus the effects of the handler clauses (§14.5).
+
+Example — fixing the outcome of random choices in a test:
+
+```text
+two_rolls : () -> (Int, Int) // Random =
+  \_ -> (Random.next_int(6), Random.next_int(6))
+
+fixed : (Int, Int) =
+  two_rolls() // {
+    Random.next_int(_), resume -> resume(4),
+  }
+```
+
+`fixed` is `(4, 4)`. The first `Random.next_int` is handled by the clause, which resumes with `4`. Because the handler is deep, the resumed computation is still handled by the same clause, so the second `Random.next_int` is too. The inner `resume` returns the completed result `(4, 4)`, and so does the outer one. Here `R` is `(Int, Int)`, and `resume : Int -> (Int, Int)`.
+
+Because handlers are deep, the continuation type needs no recursion: it is a plain `Q -> R`. Explicitly recursive protocols such as `Sum = Int -> (Int | Sum)` (§3a.1) remain available for code that wants to hand a step-by-step protocol to its caller, but they are not how handlers work.
+
+### 16.5.3 Multi-shot continuations
+
+`resume` may be called zero, one, or many times. The language does not restrict this at the type level: doing so would require linear or affine types, which Tumul does not have.
+
+Most practical effects (generators, streams, async, state) use each continuation at most once: each `resume` runs to the next operation, which produces a fresh continuation for that point. Calling the *same* continuation more than once is what makes backtracking, search, nondeterministic choice, and retrying with different arguments possible.
+
+The example below uses a `Choose` effect. Version one programs cannot declare it (§14.6); it shows the pattern that multi-shot continuations enable, and which user-defined effects would make available later. With built-in effects, the same technique can, for instance, resume `Random.next_int` once for every possible value to enumerate all outcomes.
+
+```text
+Choose.choose : () -> Bool // Choose
+
+all_outcomes : List(Outcome) =
+  computation() // {
+    Choose.choose(_), resume -> append { left: resume('true), right: resume('false) },
+    value -> (value, ()),
+  }
+```
+
+Each call to `resume` re-runs the remainder of the computation from the suspension point, **including its effects**. If the resumed code performs IO, that IO happens once per call to `resume`.
+
+Multi-shot continuations are cheap and safe in Tumul because values are immutable (§1): capturing a continuation needs no copy of mutable state, and resuming it twice cannot corrupt shared data. An implementation may optimize continuations it can prove are used at most once; this is not observable.
 
 ## 17. Iteration
 
@@ -1115,53 +1407,67 @@ A dedicated `Iteration` effect is appropriate only for stateful, asynchronous, g
 
 ## 18. Modules
 
-### 18.1 Module identity
+### 18.1 Module tree
 
 Modules are determined by file paths. No module declaration is required.
 
-Example:
+- A file is a module: `app/config.lang` is the module `app/config`.
+- A directory with the same name as a module, next to its file, holds that module's submodules: `app/config/parser.lang` is the module `app/config/parser`, a submodule of `app/config`.
+- The file may be omitted: a directory alone is a module with no declarations, containing only submodules.
+- The directory may be omitted: a file alone is a leaf module, with no submodules.
 
 ```text
-app/config.lang
+app/
+  config.lang          # app/config
+  config/
+    parser.lang        # app/config/parser, a submodule of app/config
+    _defaults.lang     # app/config/_defaults, a private submodule of app/config
+  server/              # app/server: no file, submodules only
+    routes.lang        # app/server/routes
 ```
 
-corresponds to a module path such as:
+A module's **parent** is the module one path segment up, and its **ancestors** are its parent, its parent's parent, and so on. Its **descendants** are the modules below it.
 
-```text
-app/config
-```
+Submodules are not members of their parent: a declaration `parser` in `app/config.lang` and the submodule `app/config/parser` do not collide, because a submodule is only ever reached by its path (§18.3), never as `Config.parser`.
 
-### 18.2 Reserved module roots
+### 18.2 Roots and packages
 
-Two module roots are reserved:
+Every module path starts with a root:
 
-```text
-std
-ext
-```
+- `std` is the standard library.
+- `ext/package_name` is the external package `package_name`. Each package's modules lie exactly under its `ext/package_name/` directory.
+- Every other root belongs to the application.
 
-- `std` identifies the standard library.
-- `ext` identifies external dependencies.
-- Other top-level names belong to the application.
+`std` and `ext` are directory-only: they have no declarations of their own.
+
+The code of a package can only exist under `ext/package_name`, and application code can only exist outside `std` and `ext`. So a module's subtree always lies within a single package (the standard library, one external package, or the application), and no code can add modules to another package's subtree. The visibility rule of §18.5 relies on this.
 
 ### 18.3 Imports
 
-Imports use `@`:
+An import names a module by its full path, starting at a root, in one of two forms.
 
-```text
-@std/text
-@std/io
-@ext/toml/parse
-```
-
-Selected names and aliases may be specified:
+Selected names, brought into scope unqualified:
 
 ```text
 @std/text { trim, split }
-@ext/toml/parse = Toml
 ```
 
-The exact import grammar remains **TBD**.
+An alias, through which the module's declarations are reached as `Alias.name`, and its types as `Alias.TypeName`:
+
+```text
+@ext/toml/parse = Toml
+
+Toml.parse(source)
+```
+
+Rules:
+
+- The alias is a namespace identifier, so it is PascalCase (§2.2).
+- A bare import such as `@std/text`, with neither selected names nor an alias, is not permitted. Importing every public name unqualified would crowd the scope, with no keywords to keep names apart, and there is no good default alias: `@std/text` would become `Text`, which is already a type.
+- Paths are always absolute; there are no relative imports.
+- An import may name a private module, or select a private declaration, only where that module or declaration is visible (§18.5).
+
+Being visible does not put anything in scope: a module that can see its parent's private helper still imports it by name, like any other declaration.
 
 ### 18.4 Dependency management
 
@@ -1170,22 +1476,46 @@ Fetching external modules, dependency resolution, registries, lockfiles, version
 Source imports do not need to include dependency versions:
 
 ```text
-@ext/toml/parse
+@ext/toml/parse = Toml
 ```
 
-The build system resolves this to a concrete dependency instance. The compiler must receive a unique internal identity for each resolved package instance, possibly based on a lockfile identity, content hash, package-store path, or build-graph identifier.
+The build system resolves `ext/toml` to a concrete package instance. The compiler must receive a unique internal identity for each resolved package instance, possibly based on a lockfile identity, content hash, package-store path, or build-graph identifier.
 
-### 18.5 Private modules
+### 18.5 Private declarations and visibility
 
-A module whose file name begins with `_` is private:
+A top-level declaration whose name begins with `_` is **private**:
 
 ```text
-app/_internal.lang
+_helper = \x -> x + 1                  # private value
+_Token = { kind: Text, text: Text }    # private type
 ```
 
-The exact visibility boundary is **TBD**. A likely rule is that private modules are importable only within their parent module subtree.
+A module whose file or directory name begins with `_` is a **private module**, treated as a private declaration of its parent:
 
-### 18.6 Module properties
+```text
+app/config/_defaults.lang              # a private declaration of app/config
+```
+
+**Rule:** a private declaration of module `M` is visible in `M` and in every descendant of `M`, and nowhere else. A module therefore sees its own private declarations and those of its parent and every other ancestor. It does not see the private declarations of its siblings, of their descendants, or of its own descendants.
+
+Applied to the tree in §18.1:
+
+- `app/config/parser` can use `app/config`'s private declarations, and can import `app/config/_defaults`, since that module is itself a private declaration of `app/config`.
+- `app/config/parser` cannot see the private declarations *inside* `app/config/_defaults`: those belong to `_defaults`, and `parser` is its sibling, not its descendant.
+- `app/server/routes` cannot import `app/config/_defaults` at all: it is not a descendant of `app/config`.
+- `app/config` cannot see the private declarations of `app/config/parser`: visibility flows down the tree, never up.
+
+Because a subtree never crosses a package boundary (§18.2), no package can see another package's private declarations.
+
+This rule covers declarations only. Private field labels stay local to the module in which they are written, and are not visible to descendants (§8.2).
+
+### 18.6 Import cycles
+
+Modules within one package may import each other in cycles. This is common under §18.5: a parent imports its submodules' public declarations, and those submodules import the parent's private helpers. A package's modules are checked together as a unit, just as top-level declarations within a module may be mutually recursive (§3a).
+
+Across packages, imports must not form a cycle: the application depends on packages, and packages depend on other packages, as a directed acyclic graph.
+
+### 18.7 Module properties
 
 Modules are:
 
@@ -1199,7 +1529,7 @@ A module's meaning must not depend on unrelated modules elsewhere in the build g
 
 ## 19. Equality
 
-Equality compares complete runtime values. `==` requires both operands to be **closed-total** (§7.3a): a value type with no possible additional fields or positions of any kind, public or private.
+Equality compares complete runtime values. `==` requires both operands to be **closed-total** (§7.3a): a value type with no possible additional fields or positions of any kind, public or private, at any depth — precisely, a type `T` with `Close(T) = T` (§8.4b). This is a recursive requirement, not merely a check on the outermost row: a record whose own row is closed but which has an open field nested inside it is not closed-total, and `==` on it is a type error until that field, too, is closed.
 
 When both operands' static types are already closed-total, no explicit action is needed — the comparison is well-formed as written. When an operand's static type is open, or closed-public but not provably closed-total (as with a value of a type carrying private fields, viewed from outside its defining module), `==` is a type error until each such operand is closed explicitly with `.*` (§8.4a).
 
@@ -1213,7 +1543,7 @@ The language core should remain small. The standard library may define:
 
 - `Number` as a recursive, arbitrary-precision type (§3a.5), with `Int` and other bounded numeric types defined as ranges (§6) over it;
 - `Bool` as a symbol enumeration;
-- `Text` as `List Char` (§3a.5);
+- `Text` as `List(Char)` (§3a.5);
 - `List` as the general recursive sequence type (§3a.5);
 - `Unit` as `{.}` / `(.)` (§9.4);
 - `Path`;
@@ -1236,14 +1566,14 @@ The exact primitive runtime representations are implementation concerns unless o
 | `->` | Function type / lambda body separator |
 | `\\` | Anonymous lambda |
 | `//` | Effect annotation / effect handler |
-| `|` | Type union / effect union |
-| `&` | Type intersection |
+| `\|` | Type union / effect union / pattern disjunction (§13.3) |
+| `&` | Type intersection / pattern conjunction (§13.3) |
 | `!` | Type negation (well-formed everywhere; resolves only within a bounding domain, §4.3) |
 | `^` | Type symmetric difference / XOR (sugar over `|`, `&`, `!`, §4.5) |
 | `?` | Pattern matching / Boolean conditional |
 | `@` | Module reference/import |
 | `<<` | Final expression from scoped record construction |
-| `..` | Spread/update — merge-by-name for records (§7.5), concatenation-by-position for tuples (§9.5); not interchangeable between the two kinds |
+| `..` | Spread/update — merge-by-name for records (§7.5), concatenation-by-position for tuples (§9.5); not interchangeable between the two kinds. In patterns, a rest pattern, the mirror of spread (§13.3a) |
 | `.` | Field/position projection (`t.0`, `r.name`); also the closed-row marker when trailing in a type |
 | `.*` | Close: erase to the statically-declared shape, producing a closed-total value (§8.4a) |
 | `'` | Symbol literal |
@@ -1352,6 +1682,7 @@ Implement:
 - intersections;
 - negation (well-formed everywhere, resolved only within a bounding domain);
 - symmetric difference (`^`);
+- type application `Name(T_1, ..., T_n)` and parameterized type declarations (§11.3);
 - recursive type declarations, with the guardedness check (§3a);
 - function types;
 - effect annotations.
@@ -1374,11 +1705,14 @@ Implement:
 
 - wildcard;
 - bindings;
-- symbol constants;
+- symbol constants and literals;
+- type-test patterns (PascalCase identifiers and type expressions);
 - tuple patterns;
-- record patterns (kept distinct from tuple patterns, §9.1a);
-- catch-all branches;
-- `?`, including the arm-union typing rule of §13.1.
+- record patterns, including field shorthand (kept distinct from tuple patterns, §9.1a);
+- `&` and `|` patterns;
+- rest patterns for records and tuples (§13.3a);
+- `?`, including first-match arm order and the arm-union typing rule of §13.1;
+- narrowing, exhaustiveness, and redundancy checks (§13.4, §13.5).
 
 ### Stage 6: effects
 
@@ -1388,17 +1722,18 @@ Implement:
 - effect sets;
 - operation calls;
 - handler expressions;
-- final normal-completion branches.
+- final normal-completion branches;
+- the `, resume` continuation binding on resumable operation clauses (§16.5.1).
 
 ### Stage 7: modules
 
 Implement:
 
-- file-derived module paths;
-- `@` imports;
-- aliases;
-- private module visibility;
-- private-field identity;
+- file-derived module paths and the module tree, including directory-only modules (§18.1);
+- `@` imports, in the selected-names and alias forms (§18.3);
+- private declarations and private modules, visible to the declaring module and its descendants (§18.5);
+- import cycles within a package (§18.6);
+- private-field identity, local to the module where a label is written (§8.2);
 - module-relative visibility as consumed by `.*` (§8.4a) and `==` (§19).
 
 ## 3a. Recursive types
@@ -1408,16 +1743,16 @@ Implement:
 A type declaration may refer to itself, directly or through other type declarations:
 
 ```text
-List A = () | (A, List A, .)
+List(A) = () | (A, List(A), .)
 ```
 
-This reads as: a `List` of `A` is either the empty tuple, or a closed pair of an `A` and another `List A`.
+This reads as: a `List` of `A` is either the empty tuple, or a closed pair of an `A` and another `List(A)`.
 
 Unrestricted self-reference is not permitted. A recursive occurrence of a type name must be **guarded**: every recursive occurrence must appear strictly inside a closed tuple or an arrow (function) type, never as a bare alias and never inside a union or intersection on its own.
 
 ```text
-List A = () | (A, List A, .)   # legal: recursive occurrence is inside a closed tuple
-Cont A = A -> (Result | Cont A) # legal: recursive occurrence is inside an arrow's output
+List(A) = () | (A, List(A), .)   # legal: recursive occurrence is inside a closed tuple
+Sum = Int -> (Int | Sum)        # legal: recursive occurrence is inside an arrow's output
 X = X                           # illegal: unguarded
 X = X | Int                     # illegal: unguarded
 ```
@@ -1431,15 +1766,15 @@ Arrow types are permitted as a guarding constructor in both the input (contravar
 Recursion may span a group of declarations rather than a single one:
 
 ```text
-Forest A = []
-Tree A = (A, Forest A, .)
+Tree(A) = (A, Forest(A), .)            # a value and its children
+Forest(A) = () | (Tree(A), Forest(A), .)  # a list of trees
 ```
 
-Here `Forest A` and `Tree A` refer to each other. The guardedness condition (§3a.1) applies to the group as a whole: every path from a type name back to itself, however many other declarations it passes through, must cross at least one closed tuple or arrow type.
+Here `Forest(A)` and `Tree(A)` refer to each other. The guardedness condition (§3a.1) applies to the group as a whole: every path from a type name back to itself, however many other declarations it passes through, must cross at least one closed tuple or arrow type.
 
 ### 3a.3 Finite values, infinite types
 
-A recursive type declaration such as `List A` describes an infinite family of possible values — lists of every length. Any individual value is still finite: a list terminates in a finite number of steps at `()`. Equality (§19), which compares complete runtime values, therefore always terminates on any actual value, even though the type itself has infinitely many inhabitants. Type-level questions (subtyping, exhaustiveness) and value-level questions (equality, pattern matching) are separate concerns; only the former needs special treatment for recursive types.
+A recursive type declaration such as `List(A)` describes an infinite family of possible values — lists of every length. Any individual value is still finite: a list terminates in a finite number of steps at `()`. Equality (§19), which compares complete runtime values, therefore always terminates on any actual value, even though the type itself has infinitely many inhabitants. Type-level questions (subtyping, exhaustiveness) and value-level questions (equality, pattern matching) are separate concerns; only the former needs special treatment for recursive types.
 
 ### 3a.4 Subtyping and decidability
 
@@ -1458,31 +1793,44 @@ An implementation is not required to support the general algorithm from the outs
 With guarded recursion available, unbounded standard-library types need no bedrock primitive support beyond the recursion mechanism itself:
 
 ```text
-List A = () | (A, List A, .)
+List(A) = () | (A, List(A), .)
 ```
 
 ```text
-Text = List Char
-Number = Sign & (Digit, List Digit, .)     # arbitrary-precision; exact digit-list encoding TBD
+Text = List(Char)
+Number = (Sign, Digit, List(Digit), .)   # illustrative only; exact digit-list encoding TBD (§24)
 ```
 
 A numeral literal is not a separate concept layered on top of `Number` — it denotes a `Number` value directly, under whatever desugaring into the digit-list representation is settled (§24). This keeps the type system's primitive vocabulary small: enumerations (§5) and ranges (§6) remain finite constructs, and every unbounded type in the standard library is an instance of the one recursive mechanism defined here.
 
-Note that recursion through an arrow type's output, as permitted by §3a.1, is what a hypothetical function-top (`[] -> Top`) would require — but since the language has no top type (§3.3), this guard form is used for genuinely recursive function protocols (§16.5, continuations; state-machine/typestate APIs; parser combinators) rather than for constructing a universal type.
+Note that recursion through an arrow type's output, as permitted by §3a.1, is what a hypothetical function-top (`[] -> Top`) would require — but since the language has no top type (§3.3), this guard form is used for genuinely recursive function protocols (step-by-step producers handed to a caller; state-machine/typestate APIs; parser combinators — note that effect-handler continuations do not need it, since handlers are deep, §16.5.2) rather than for constructing a universal type.
 
 ## 24. Intentionally unresolved questions
 
-1. Exact import grammar after `@`.
-2. Whether type declarations use `=` or a separate punctuation form.
-3. Type-level reflection syntax and static semantics for enumerations — what `values`, `size`, `ordinal`, and friends (§5.5) actually look like at the type-checking level, not just which operations should exist.
-4. Enumeration order and duplicate-member behavior.
-5. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order) and the desugaring rule from numeral literals to `Number` values.
-6. Exact pattern grammar and binding behavior — narrowed by §9.1a/§13.3 (tuple and record patterns are confirmed as separate productions, never collapsing into one), but the rest of the grammar (literals in patterns, nested patterns, guards) is untouched.
-7. Whether a final bare identifier pattern is always a catch-all binding.
-8. Whether general effect declarations are available in version one.
-9. Syntax for resumable handlers and continuation binding — narrowed by §16.5/§3a.5: the continuation's *type* is settled (an arrow-guarded recursive type, `Cont A = A -> (Result | Cont A)`), but the handler syntax for receiving and invoking `resume` is still open.
-10. Exact syntax for generic `Raise` operations.
-11. Private-module visibility boundaries.
-12. Formal typing rules for the close operator `.*` (§8.4a): given a value of static type `T`, what is the type of `T.*`, in each of the open / closed-public / closed-total cases, for both records and tuples. (The operator's existence and module-relative behavior are settled; only the formal typing derivation remains.)
+1. Whether type declarations use `=` or a separate punctuation form.
+2. Type-level reflection syntax and static semantics for enumerations — what `values`, `size`, `ordinal`, and friends (§5.5) actually look like at the type-checking level, not just which operations should exist.
+3. Enumeration order and duplicate-member behavior.
+4. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order) and the desugaring rule from numeral literals to `Number` values.
+5. The exact set of built-in effects and the signatures of their operations (§14.6).
+6. Polymorphic function signatures: how type and effect variables in value signatures, such as `Element` and `E` in `for_each` (§17.1) or `E` in `Raise.raise` (§14.7), are introduced, and how parametric polymorphism combines with semantic subtyping and negation. Parameterized *types* are settled (§11.3); polymorphic *functions* are not. The theory is non-trivial; see Castagna, Nguyễn, Xu, Im, Lenglet, Padovani, *Polymorphic Functions with Set-Theoretic Types, Part 1: Syntax, Semantics, and Evaluation*, POPL 2014, and Castagna, Nguyễn, Xu, Abate, *Part 2: Local Type Inference and Type Reconstruction*, POPL 2015.
+7. A module-qualified syntax that would let a descendant module name an ancestor's private field labels directly, instead of going through the ancestor's private helpers (§8.2). Not needed now; a possible later addition.
 
-Resolved since the previous revision and removed from this list: the empty record/tuple notation (§9.4), whether top-level declarations may be mutually recursive (§3a.1–3a.2, yes), whether public values can explicitly hide or project fields (yes, via `.*`, §8.4a), the global top type (deliberately not adopted, §3.3), deriving a numeric universe from whole-program range literals (rejected, §18.6), and whether a dedicated `for` syntax exists (no, §17.2).
+Resolved since the previous revision and removed from this list:
+
+- The empty record/tuple notation (§9.4).
+- Whether top-level declarations may be mutually recursive: yes, subject to guardedness (§3a.1–3a.2).
+- Whether public values can explicitly hide or project fields: yes, via `.*` (§8.4a).
+- The global top type: deliberately not adopted (§3.3).
+- Deriving a numeric universe from whole-program range literals: rejected (§18.7).
+- Whether a dedicated `for` syntax exists: no (§17.2).
+- The formal typing rules for the close operator `.*`: a recursive `Close(T)` operation, terminating by the same state-repetition criterion as recursive-type subtyping, with closed-total characterized as `Close(T) = T` (§8.4b).
+- Resumable handlers: continuations are bound by a separate `, resume` binding after the operation pattern, handlers are deep so `resume : Q -> R // E`, and continuations are multi-shot (§16.5).
+- The pattern grammar and catch-all rules: patterns are set-theoretic like types, with type tests and `&`/`|`; arms match in order; bindings are narrowed by negation of earlier arms and must have a bounded type; exhaustiveness and redundancy are subtyping checks (§13.3–§13.5).
+- Rest patterns, as the mirror of spread (§13.3a).
+- Guards on match arms: considered and deliberately left out for now.
+- The import grammar: two forms, selected names and alias; no bare imports; absolute paths only (§18.3).
+- User-defined effects: none in version one; a fixed set of built-in effects (§14.6).
+- Resumable vs. abortive operations: decided by the operation's result type, abortive exactly when it is `Never`; no declaration needed (§16.5).
+- `Raise`: takes any type, with no error supertype; `Raise(A) | Raise(B)` is `Raise(A | B)`, and `Raise(A) <: Raise(B)` when `A <: B` (§14.7).
+- Type parameter syntax: `Name(T_1, ..., T_n)`, a parameter list rather than a tuple type, with no juxtaposition form (§11.3).
+- Private-module visibility, generalized to all private declarations: visible to the declaring module and its descendants only; packages confined to `ext/package_name`, so subtrees never cross packages; import cycles allowed within a package (§18.1–§18.6).
