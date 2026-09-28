@@ -181,33 +181,33 @@ Square brackets define finite enumerations:
 
 An enumeration is a finite set of explicitly listed values. The empty enumeration is the bottom type.
 
-### 5.2 Enumeration membership
+### 5.2 Enumerations are sets
 
-An enumeration is conceptually a union of singleton types:
+An enumeration is a union of singleton types:
 
 ```text
 [1, 2, 3]
 ```
 
-is equivalent at the type level to:
+is the same type as:
 
 ```text
 1 | 2 | 3
 ```
 
-The bracket form additionally carries finite-enumerability information.
+As a type, an enumeration is a set, so the order in which members are written does not matter: `[1, "two"]` and `["two", 1]` are the same type, and each is a subtype of the other. The bracket form additionally declares that the set is finite and states an order among its members, which enumeration operations use (§5.5).
 
 ### 5.3 Duplicate members
 
-The proposed rule is that duplicate members are removed from the type's set of inhabitants:
+Members of an enumeration must be distinct: two members that are equal under `==` (§19) are a type error.
 
 ```text
-[1, 2, 2, 3]
+[1, 2, 2, 3]    # type error: 2 appears twice
 ```
 
-has the same inhabitants as `[1, 2, 3]`.
+Silently merging duplicates would hide typos, and there is no use for repeating a member: a repeated member would give one value two positions, making `ord` ambiguous and `succ` and `pred` undefined (§5.5).
 
-Enumeration order and the precise behavior of duplicate values remain **TBD**.
+The rule applies to the member list of a bracketed enumeration, not to types built from several of them: `[1, 2] | [2, 3]` is valid, and is the set `{1, 2, 3}` (with no declared order, §5.5).
 
 ### 5.4 Enumeration subtyping
 
@@ -218,20 +218,28 @@ If every member of an enumeration inhabits `T`, then the enumeration is a subtyp
 [1, "two"] <: Int | Text
 ```
 
-### 5.5 Enumeration operations
+Subtyping, like type equality, never depends on member order.
 
-Finite enumerations should be programmatically enumerable. Possible standard operations include:
+### 5.5 Declaration order and enumeration operations
+
+Because types are sets, member order cannot be a property of a type: if it were, two equal types could disagree about it. Order is instead a property of the enumeration **declaration**, the bracketed list as written. Operations that depend on order are asked of a specific, statically known declaration, through namespace access (§2.2):
 
 ```text
-values
-size
-ordinal
-from_ordinal
-successor
-predecessor
+Color = ['red, 'green, 'blue],
+
+Color.ord('green)      # 1
 ```
 
-The exact type-level reflection syntax is **TBD**.
+Placeholder syntax; the exact set of operations and their signatures are **TBD** (§24). Candidate operations include `values`, `size`, `ord`, `from_ord`, `succ` and `pred`.
+
+Which types have a declaration order:
+
+- A type name bound directly to a bracketed enumeration has the order of its members as written.
+- An alias of such a name has the same order: `Colour = Color` gives `Colour.ord('green) == 1`.
+- A range (§6.1) has ascending order.
+- Any other type has no declaration order, even when it denotes a finite set: `Color & !['blue]` and `[1, 2] | [3]` have none, and asking for one is a type error.
+
+A consequence worth stating: two declarations of the same set in different orders are the same type but different orders. With `A = [1, 2]` and `B = [2, 1]`, `A` and `B` are interchangeable everywhere types are compared, yet `A.ord(1) == 0` and `B.ord(1) == 1`. Code that depends on order shows it, by naming the declaration it asks.
 
 ## 6. Range types and numeric types
 
@@ -1915,12 +1923,11 @@ Note that recursion through an arrow type's output, as permitted by §3a.1, is w
 
 ## 24. Intentionally unresolved questions
 
-1. Type-level reflection syntax and static semantics for enumerations — what `values`, `size`, `ordinal`, and friends (§5.5) actually look like at the type-checking level, not just which operations should exist.
-2. Enumeration order and duplicate-member behavior.
-3. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order) and the desugaring rule from numeral literals to `Number` values.
-4. The exact set of built-in effects and the signatures of their operations (§14.6).
-5. Polymorphic function signatures: how type and effect variables in value signatures, such as `Element` and `E` in `for_each` (§17.1) or `E` in `Raise.raise` (§14.7), are introduced, and how parametric polymorphism combines with semantic subtyping and negation. Parameterized *types* are settled (§11.4); polymorphic *functions* are not. The theory is non-trivial; see Castagna, Nguyễn, Xu, Im, Lenglet, Padovani, *Polymorphic Functions with Set-Theoretic Types, Part 1: Syntax, Semantics, and Evaluation*, POPL 2014, and Castagna, Nguyễn, Xu, Abate, *Part 2: Local Type Inference and Type Reconstruction*, POPL 2015.
-6. A module-qualified syntax that would let a descendant module name an ancestor's private field labels directly, instead of going through the ancestor's private helpers (§8.2). Not needed now; a possible later addition.
+1. Enumeration operations (§5.5): the exact set, their syntax, and their types — for instance what `succ` returns for the last member, and how `ord`'s argument type is tied to the declaration it is asked of. Also whether a range written high-to-low, such as `10..1`, is an error or a descending order.
+2. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order) and the desugaring rule from numeral literals to `Number` values.
+3. The exact set of built-in effects and the signatures of their operations (§14.6).
+4. Polymorphic function signatures: how type and effect variables in value signatures, such as `Element` and `E` in `for_each` (§17.1) or `E` in `Raise.raise` (§14.7), are introduced, and how parametric polymorphism combines with semantic subtyping and negation. Parameterized *types* are settled (§11.4); polymorphic *functions* are not. The theory is non-trivial; see Castagna, Nguyễn, Xu, Im, Lenglet, Padovani, *Polymorphic Functions with Set-Theoretic Types, Part 1: Syntax, Semantics, and Evaluation*, POPL 2014, and Castagna, Nguyễn, Xu, Abate, *Part 2: Local Type Inference and Type Reconstruction*, POPL 2015.
+5. A module-qualified syntax that would let a descendant module name an ancestor's private field labels directly, instead of going through the ancestor's private helpers (§8.2). Not needed now; a possible later addition.
 
 Resolved since the previous revision and removed from this list:
 
@@ -1944,4 +1951,5 @@ Resolved since the previous revision and removed from this list:
 - Scope: no forward references, except to types and functions, and no value may depend on a later value through the functions it calls (§11.5).
 - Type ascription in expressions: `(e : T)`, always parenthesized, so the Boolean conditional keeps `c ? a : b` (§11.6, §13.2).
 - Types in patterns appear only after `:` (`n: Int`, `{ x: Int = n }`); bare type tests and pattern-level `&` are gone (§13.3).
+- Enumeration order and duplicates: enumerations are sets, so order never affects types or subtyping; order belongs to the declaration and is asked of it by name (`Color.ord(x)`); duplicate members are a type error (§5.2–5.5).
 - Private-module visibility, generalized to all private declarations: visible to the declaring module and its descendants only; packages confined to `ext/package_name`, so subtrees never cross packages; import cycles allowed within a package (§18.1–§18.6).
