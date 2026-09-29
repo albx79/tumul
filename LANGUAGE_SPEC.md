@@ -22,15 +22,18 @@ Tumul is designed around these principles:
 - Field order affects scoping and evaluation dependencies, but never type identity.
 - Records and tuples are distinct type formers with parallel, analogous rules, not a single unified kind (§9.1).
 - Recursive type declarations are permitted under a guardedness condition (§3a).
+- Literals (`42`, `"foo"`) are neither values nor types: they are elaborated at compile time, against the expected type, by a pure function attached to that type (§11.7).
+- Whitespace is significant in exactly two places: where a `#` comment starts, and whether a `-` is prefix or binary (§2.5).
 
 ## 2. Lexical conventions
 
 ### 2.1 Comments
 
-Comments begin with `#` and continue to the end of the line.
+Comments begin with `#` and continue to the end of the line. A `#` starts a comment only at the start of a line or after whitespace; a `#` attached to the token before it is a lexical error, unless it is the base separator of a numeral (§2.3).
 
 ```text
 # This is a comment
+x = 1   # so is this
 ```
 
 The token `//` is reserved for effect annotations and effect handling.
@@ -57,6 +60,60 @@ Symbols are proposed to be globally identified by spelling:
 ```text
 'ready == 'ready
 ```
+
+### 2.3 Numeral literals
+
+```text
+42
+-42.0
+1_000_000
+6.02e23
+16#ff
+-2#1010_1010
+30#abada1010ba
+```
+
+A numeral is an optional sign, then either a decimal numeral or a based numeral:
+
+```text
+decimal = digits [ '.' digits ] [ ('e' | 'E') [ '+' | '-' ] digits ]
+based   = digits '#' basedigits [ '.' basedigits ]
+```
+
+- `digits` are the digits `0`–`9`, and a single `_` may separate two digits for readability (`1_000`); the underscore has no meaning.
+- In a based numeral, the digits before `#` are a decimal **base** from 2 to 36. The digits after `#` are `0`–`9` then `a`–`z` (case-insensitive), with values 0–35. A digit whose value is not below the base is a lexical error, as is a base outside 2–36: `1#0`, `16#g` and `8#9` are errors.
+- Based numerals have no exponent: in bases above 14, `e` is itself a digit.
+- A `.` belongs to a numeral only when a digit follows it, so `1..10` is `1`, `..`, `10` (a range, §6.1). After a projecting `.`, digits are a tuple position, not a numeral: `t.0.1` projects twice.
+- The **sign** belongs to the numeral when the `-` is a prefix (§2.5). `-128` is a single literal, so a type whose smallest member is `-128` can be written without ever forming `128`.
+
+A numeral is not a value. It is a **literal**: a source-level entity of the kind `NumeralLiteral` that carries, unevaluated, its sign, base, integer digits, fraction digits and exponent, exactly as written apart from separators. Trailing zeros are kept, so a constructor can tell `42` from `42.0`. What a numeral becomes is decided by the type it is used at (§11.7).
+
+### 2.4 String literals
+
+```text
+"foo"
+"tab:\t"
+```
+
+A string literal is written between double quotes. It is not a value either, but a literal of the kind `StringLiteral`, which carries its content as a sequence of elements, each either a Unicode scalar value or an explicitly written byte. That distinction is what lets a constructor for UTF-8 `Text` reject a malformed byte sequence while a constructor for `Path` accepts it. The escape syntax is **TBD** (§24).
+
+### 2.5 Whitespace-sensitive tokens
+
+Whitespace is significant in two places, both settled by the tokens themselves and never by later stages:
+
+- **`#`** starts a comment only after whitespace or at the start of a line (§2.1).
+- **`-`** is a *prefix* or a *binary* operator by how it is spaced:
+
+| Spelling | Reading |
+|---|---|
+| `a - 2`, `a-2` | binary: space on both sides or on neither |
+| `a -2`, `f -x` | prefix: space before, none after; `a -2` is the application `a(-2)` (§10.5) |
+| `a- 2` | lexical error: space after only |
+| `(-2)`, `x = -2`, `v ? { -1 -> …` | prefix, because the previous token cannot end an operand |
+
+A prefix `-` followed by a numeral is part of that numeral (§2.3). A prefix `-` followed by anything else is unary negation, an ordinary operator whose meaning the standard library gives (§20). `->` is one token and is unaffected.
+
+The usual slip, `x -1` for `x - 1`, does not silently change meaning: it is an application of `x`, so it is a type error unless `x` is a function, and the error can say so.
 
 ## 3. Types
 
@@ -230,7 +287,7 @@ Color = ['red, 'green, 'blue],
 Color.ord('green)      # 1
 ```
 
-Placeholder syntax; the exact set of operations and their signatures are **TBD** (§24). Candidate operations include `values`, `size`, `ord`, `from_ord`, `succ` and `pred`.
+Placeholder syntax; the exact set of operations and their signatures are **TBD** (§24). These operations are the **companion** members that an enumeration declaration generates for itself (§11.3a). Candidate operations include `values`, `size`, `ord`, `from_ord`, `succ` and `pred`.
 
 Which types have a declaration order:
 
@@ -252,7 +309,7 @@ Ranges define finite numeric types:
 -32768..32767
 ```
 
-A range is conceptually an enumeration of consecutive values, grounded in the digit-list representation of `Number` (§3a.5): a range's bound may be arbitrarily large, since `Number` itself is unbounded. Whether a given range is small enough to be represented efficiently by a target machine (e.g. packed into a machine word, or even a single bit for a two-value range) is a compiler concern, not a language restriction — the language places no upper bound on a range's bounds.
+The bounds of a range are numerals, elaborated at `Number` (§11.7.4). A range is conceptually an enumeration of consecutive values, grounded in the digit-list representation of `Number` (§3a.5): a range's bound may be arbitrarily large, since `Number` itself is unbounded. Whether a given range is small enough to be represented efficiently by a target machine (e.g. packed into a machine word, or even a single bit for a two-value range) is a compiler concern, not a language restriction — the language places no upper bound on a range's bounds.
 
 ### 6.2 Library-defined numeric types
 
@@ -715,6 +772,26 @@ is a subtype of:
 
 because a function requiring only `x` can accept a record containing `x` and `y`.
 
+### 10.5 Application
+
+A function is applied by writing it next to its argument:
+
+```text
+sin 1
+sin -Math.pi
+sum { left = 1, right = 2 }
+parse_config (trim text)
+```
+
+The argument is a **primary expression**: an identifier, a literal, a parenthesized expression or tuple, a struct literal, an enumeration, or a projection chain such as `Math.pi`. Parentheses are therefore not part of the call syntax. `f(a, b)` is `f` applied to the tuple `(a, b)`, and `f (a, b)` means the same.
+
+- Application is left-associative and binds tighter than every infix operator: `f g x` is `(f g) x`, and `sin 1 + 2` is `(sin 1) + 2`. Because every function has one input (§10.1), `f g x` requires `f g` to be a function.
+- Projection (`.`, `.*`) binds tighter than application: `f x.y` is `f (x.y)`.
+- A prefix `-` (§2.5) begins an argument: `sin -Math.pi` is `sin (-Math.pi)`, and `a -2` is `a(-2)`. Binary subtraction needs symmetric spacing: `a - 2` or `a-2`.
+- The same form is used for the left-hand side of a named-function declaration (§10.2) and for effect operations (§15). Types are the exception: type application is only the parenthesized `Name(T_1, ..., T_n)` (§11.4), because a parameter list is not a tuple.
+
+How a call written with an adjacent bracket interacts with a following projection (`f(x).y`) is **TBD** (§24).
+
 ## 11. Declarations and bodies
 
 The language has no `fn`, `function`, `type`, `let`, `import`, `handle`, `return`, or other reserved word keywords.
@@ -722,7 +799,7 @@ The language has no `fn`, `function`, `type`, `let`, `import`, `handle`, `return
 Two symbols do all the work, each with one meaning everywhere:
 
 - `=` **binds**: a name to a value, a type name to a type, a field to its value, an alias to a module.
-- `:` **gives a type**: to a declared name, to a field of a record type, to a pattern (§13.3), or to an expression (§11.6).
+- `:` **gives a type**: to a declared name, to a field of a record type, to a pattern (§13.3), or to an expression (§11.6). It has no other meaning.
 
 ### 11.1 Bodies
 
@@ -785,6 +862,31 @@ Types are not values, so a type declared in a struct literal is **not a field** 
 
 Type declarations may be self-referential or mutually recursive, subject to the guardedness condition of §3a.
 
+### 11.3a Companions
+
+A type declaration may be followed by `::` and a body (§11.1). The body's declarations are the **companion** of the type:
+
+```text
+TypeDecl = Name [ '(' params ')' ] '=' TypeExpr [ '::' Body ]
+```
+
+```text
+Path = { _bytes: List(Byte) } :: {
+  from_literal_str = \lit -> …,     # builds a Path from a string literal (§11.7)
+  join = \{ left, right } -> …,
+},
+```
+
+A companion member is reached through the type's name, `Path.join`, exactly as an enumeration's operations are (`Color.ord`, §5.5). Its rules:
+
+- **Ordinary declarations.** The body follows §11.1 and §11.5: members may be private (`_helper`), functions may refer forward, and the body sees the type's own name and parameters. It is written in the declaring module, so it sees the private fields of the type it builds (§8.2).
+- **Not part of the type.** A companion is not part of the set the name denotes. Type equality, subtyping and `==` never consult it. In type positions `Path` still means the bare set.
+- **Found by declared name.** The checker keeps the *declared type expression* next to the set it denotes, so that a companion can be found from an annotation. A bare name reaches its companion; an alias declared as a bare name shares it (`Route = Path` has `Route.join`); any other type expression (a union, an intersection, a negation, a structural type written out) has no companion. A type application, `Pair(A, B)`, reaches the companion of the parameterized declaration it applies. Members of a parameterized companion are polymorphic (§24).
+- **Enumerations.** The order operations of an enumeration declaration (§5.5) are generated companion members. A written companion may add members to an enumeration but may not redefine a generated one.
+- **Placement.** `::` follows only the right-hand side of a type declaration, in any body (§11.3). It is not a type operator, and the right-hand side must be a type expression, not a conditional.
+
+Companions are an ordinary structure with one job in the core language: the reserved names `from_literal_num` and `from_literal_str` are how a type says what its literals mean (§11.7).
+
 ### 11.4 Type parameters
 
 A type declaration may take type parameters, written as a parenthesized, comma-separated list after its name. The parameters are type identifiers (§2.2), bound by the declaration and in scope in its right-hand side:
@@ -808,8 +910,8 @@ Declarations are read top to bottom. A declaration may refer to declarations bef
 
 ```text
 {
-  is_even = \n -> n == 0 ? 'true : is_odd(n - 1),    # refers forward to is_odd
-  is_odd  = \n -> n == 0 ? 'false : is_even(n - 1),
+  is_even = \n -> n == 0 ?? 'true :: is_odd(n - 1),    # refers forward to is_odd
+  is_odd  = \n -> n == 0 ?? 'false :: is_even(n - 1),
   << is_even(10)
 }
 ```
@@ -831,15 +933,72 @@ The same rules hold in a module, whose body is a module file (§18.8). Across mo
 
 ### 11.6 Type ascription
 
-An expression can be given a type with `:`, in parentheses:
+An expression can be given a type with `:`:
 
 ```text
-(expression : Type)
+expression : Type
 ```
 
-The expression's type must be a subtype of `Type`, and the ascribed expression has type `Type`. Ascription only widens what the checker knows about the value; unlike `.*` (§8.4a), it never changes the value.
+The expression's type must be a subtype of `Type`, and the ascribed expression has type `Type`. Ascription only widens what the checker knows about the value; unlike `.*` (§8.4a), it never changes the value. It also supplies the expected type for literals (§11.7.2): `"/etc" : Path` is a `Path`, and `5 : 1..10` is a number checked against that range.
 
-The parentheses are required. They keep ascription from colliding with the Boolean conditional `condition ? a : b` (§13.2), whose `:` is the only use of `:` that is not about types.
+`:` is only ever about types, so ascription needs no parentheses where an expression stands alone between separators: as an item of a tuple or an enumeration, as a branch of `??` (§13.2), or as the argument in `<<`.
+
+```text
+["foo" : Path, "bar" : Path],
+(a : Int, b),
+flag ?? 1 : Int :: 2,
+```
+
+**Parentheses are required** when the ascription is the value of a declaration or field, as in `x = (5 : Int)`, since `x: 5 : Int` would read as two annotations. Ascription has the lowest precedence of any operator except `??`/`::`; the type after `:` extends as far as it can and ends at the first `,`, `)`, `]`, `}`, `=`, `->` or `::` not nested inside it.
+
+### 11.7 Literals
+
+#### 11.7.1 What a literal is
+
+A numeral (§2.3) or a string (§2.4) is a **literal**, and a literal is neither a value nor a type. It is a piece of code that the compiler turns into a value, at compile time, according to the type it is used at. The literal `"foo"` is a `Text` where a `Text` is expected, a `Path` where a `Path` is expected, and the same characters in both cases.
+
+#### 11.7.2 Expected types
+
+Elaboration is bidirectional. A literal is checked against an **expected type** `E` that flows inward from:
+
+- a declaration with a type, `port : Port = 8080`;
+- an ascription, `"a" : Ascii`;
+- the input type of the function it is applied to, so `f "a"` with `f : Path -> …` elaborates `"a"` as a `Path`;
+- the declared output type of a function, the declared type of a field in a typed record, or a position in a typed tuple;
+- the scrutinee's type, for a literal in a pattern (§11.7.5).
+
+With no expected type, as in `x = "foo"` or a field of an untyped struct, the literal takes the **default carrier** of its kind: `Text` for a string, `Number` for a numeral.
+
+#### 11.7.3 Constructors
+
+A type says what its literals mean through two reserved companion members (§11.3a):
+
+```text
+from_literal_num : NumeralLiteral -> T // Raise(Text)
+from_literal_str : StringLiteral  -> T // Raise(Text)
+```
+
+A type provides whichever it supports, and neither is required. The compiler checks the signature: the input is exactly the literal kind, the result is a subtype of the declaring type, and the only effect allowed is `Raise(Text)`. The function is **pure** and runs at compile time. `Raise(message)` from it is a compile error reported at the literal, carrying `message`. For example, a `Text` constructor raises on a malformed UTF-8 sequence, and an `Int8` constructor raises on `300`.
+
+Running the function is a compile-time evaluation and may not terminate. That is an implementation concern: an implementation may bound the work and report a compile error. A constructor's own dependencies must not pass through the module containing the literal (§18.6); such a cycle is an error.
+
+#### 11.7.4 Resolution
+
+Given a literal of kind `K` and expected type `E`:
+
+1. **Companion.** If the declared type expression of `E` (§11.3a) has a constructor for `K`, the literal is that constructor applied to the literal, evaluated at compile time. Its result is the value.
+2. **Carrier.** Otherwise, let `C` be the default carrier of `K` (`Number` or `Text`). If `E & C` is non-empty, the literal is elaborated at `C` by `C`'s constructor and then checked to be a member of `E`. A value outside `E` is a compile error. This is how ranges, enumerations and unions of them work, since none of them is a declared name with a companion: `port : 1..65535 = 8080`, `mode : ["r", "w"] = "r"`, `maybe : Int | 'none = 5`.
+3. **Otherwise** the literal is a compile error. In particular `E & C` empty means the literal cannot be a member of `E`, and the error suggests an ascription such as `"p" : Path` or the correct type.
+
+With no expected type, `E` is `C` and rule 1 applies to `C`. A literal that is checked against `E` has type `E`; an unchecked literal has type `C`.
+
+A union whose members are all disjoint from `C` gets no help from rules 1 and 2: `x : Path | 'none = "p"` is an error, and `x : Path | 'none = ("p" : Path)` is not. Literals never search across the members of a union for the one constructor that happens to accept them, because that would make the meaning of a literal depend on its contents.
+
+**Ranges and enumerations.** The bounds of a range (§6.1) and the members of an enumeration (§5.1) are literals in type position, where no expected type exists. They take their kind's default carrier, so `["foo", "bar"]` is two `Text` values and `1..10` is a range of `Number`. To use another carrier, ascribe the member (§11.6): `["foo" : Path, "bar" : Path]`. A literal is never a subtype of anything on its own: if `["foo"]` were a subtype of every type that could construct `"foo"`, it would be a subtype of both `Text` and `Path`, which are disjoint sets, and a type would have no single meaning as a set.
+
+#### 11.7.5 Literals in patterns
+
+A literal in a pattern (§13.3) is elaborated with the scrutinee's type as the expected type, and the arm matches values equal to the result under `==`. A pattern literal that elaborates to a value outside the scrutinee's type is a compile error, because the arm could never match. Elaboration failures are compile errors, as elsewhere.
 
 ## 12. Struct literals as scoped computation
 
@@ -993,27 +1152,32 @@ direction ? {
 }
 ```
 
+`?` is always followed by a match body in braces, and never by a plain expression. That is why the Boolean conditional has its own token, `??` (§13.2): after `?`, a `{` is always the start of the arms and never of a struct literal.
+
 **Arm order.** Arms are tried in order, and the first arm whose pattern matches is taken. Patterns may overlap; order decides which arm wins.
 
 **Type of a `?`-expression.** Each arm's right-hand-side expression may have a different type. The type of the overall `?`-expression is the union of the arms' types — `pattern_1 -> e_1, ..., pattern_n -> e_n` has type `T_1 | ... | T_n`, where `T_i` is the type of `e_i` — with no merging or collapsing across arms. In particular, when arms are struct literals with different fields, the result is a union of the (closed, per §7.4) record types of each arm, not a single record type with field-level optionality:
 
 ```text
-bool_expr ? { x = 2 } : { y = 2 }
+bool_expr ?? { x = 2 } :: { y = 2 }
 ```
 
 has type `{x: Int, .} | {y: Int, .}`, not `{x: Int|Nothing, y: Int|Nothing, .}` — the latter would admit values (such as one with both fields, or neither) that this expression can never actually produce. This rule applies uniformly wherever a `?`-expression appears — as a struct field's value, as the right-hand side of `<<` (§12.3), as a function body, or anywhere else an expression is expected — since it is a property of `?` itself, not of the surrounding context.
 
 ### 13.2 Boolean conditional sugar
 
-A two-branch Boolean match may use:
+A two-branch Boolean match is written with `??` and `::`:
 
 ```text
-condition ? when_true : when_false
+condition ?? when_true :: when_false
 ```
 
-This is sugar for matching over the Boolean enumeration, and inherits the union-typing rule of §13.1 directly.
+This is sugar for matching over the Boolean enumeration, `condition ? { 'true -> when_true, 'false -> when_false }`, and inherits the union-typing rule of §13.1 directly. The condition must be a `Bool`.
 
-The `:` here is the only `:` in the language that does not give a type. It cannot collide with type ascription, because ascription inside an expression is always parenthesized (§11.6): `c ? (a : T) : b`.
+- **Tokens.** `??` and `::` are single tokens. `? ?` is two tokens, and is an error.
+- **Associativity.** `::` pairs with the nearest `??`, so conditionals chain to the right without parentheses: `a ?? x :: b ?? y :: z` is `a ?? x :: (b ?? y :: z)`, and `a ?? (b ?? x :: y) :: z` needs its parentheses.
+- **Precedence.** `??` is the loosest expression operator. An ascription in a branch is parsed first: `c ?? 1 : Int :: 2` (§11.6).
+- **Bool order.** The desugared arms are written by name, so the order in which `Bool` lists its members (`['false, 'true]`, §6.3) does not matter.
 
 ### 13.3 Patterns
 
@@ -1024,7 +1188,7 @@ A pattern denotes a set of values, exactly as a type does, together with a set o
 | `_` | any value | nothing |
 | `name` (lowercase) | any value | `name` |
 | `'sym` | the symbol `'sym` | nothing |
-| literal, e.g. `0`, `"yes"` | that value | nothing |
+| literal, e.g. `0`, `"yes"`, `-1` | the value the literal elaborates to at the scrutinee's type (§11.7.5) | nothing |
 | `p: T` | values matching `p` that are of type `T` (a **type test**) | the bindings of `p` |
 | `(p_0, ..., p_k)` | tuples with at least these positions, each matching its `p_i` | the bindings of each `p_i` |
 | `(p_0, ..., p_k, .)` | tuples with exactly these positions | as above |
@@ -1660,7 +1824,9 @@ The language core should remain small. The standard library may define:
 - `Text` as `List(Char)` (§3a.5);
 - `List` as the general recursive sequence type (§3a.5);
 - `Unit` as `{.}` / `(.)` (§9.4);
-- `Path`;
+- `Ascii` and `Path` as further text types, each with its own literal constructor (§11.7). `Text`, `Ascii` and `Path` differ in what they accept and how they are stored, not in how a string literal is written;
+- `Number` and every other numeric type, whose literal constructors (§11.7.3) decide what a numeral means;
+- the meaning of unary `-` and of the infix operators;
 - `Option`;
 - `Raise`;
 - `IO`;
@@ -1675,7 +1841,8 @@ The exact primitive runtime representations are implementation concerns unless o
 
 | Syntax | Meaning |
 |---|---|
-| `:` | Gives a type: to a declaration, a record-type field, a pattern (§13.3), or a parenthesized expression (§11.6). Also the `else` separator of the Boolean conditional (§13.2), its only use not about types |
+| `:` | Gives a type: to a declaration, a record-type field, a pattern (§13.3), or an expression (§11.6). Its only meaning |
+| `::` | In an expression, the `else` separator of the Boolean conditional (§13.2). After a type declaration's right-hand side, introduces its companion body (§11.3a) |
 | `=` | Binds: a value or type declaration, a field in a struct literal or record pattern, or an import alias (§11) |
 | `->` | Function type / lambda body separator |
 | `\\` | Anonymous lambda |
@@ -1684,14 +1851,18 @@ The exact primitive runtime representations are implementation concerns unless o
 | `&` | Type intersection |
 | `!` | Type negation (well-formed everywhere; resolves only within a bounding domain, §4.3) |
 | `^` | Type symmetric difference / XOR (sugar over `|`, `&`, `!`, §4.5) |
-| `?` | Pattern matching / Boolean conditional |
+| `?` | Pattern matching; always followed by a match body (§13.1) |
+| `??` | Boolean conditional, `c ?? a :: b` (§13.2) |
 | `@` | Module reference/import |
 | `<<` | Final expression from scoped record construction (not in module bodies, §18.8) |
 | `..` | Spread/update — merge-by-name for records (§7.5), concatenation-by-position for tuples (§9.5); not interchangeable between the two kinds. In patterns, a rest pattern, the mirror of spread (§13.3a) |
 | `.` | Field/position projection (`t.0`, `r.name`); also the closed-row marker when trailing in a type |
 | `.*` | Close: erase to the statically-declared shape, producing a closed-total value (§8.4a) |
 | `'` | Symbol literal |
-| `#` | Comment |
+| `#` | Comment, after whitespace or at line start (§2.1). Inside a numeral, the base separator, `16#ff` (§2.3) |
+| `-` | Binary minus, or prefix: part of a numeral or unary negation, by spacing (§2.5) |
+| `"…"` | String literal (§2.4) |
+| *juxtaposition* | Function application, `f x` (§10.5) |
 | `,` | Separates the declarations of a body (§11.1), including a module file; also separates tuple positions, enumeration members, and type arguments |
 | `{}` | Record construction/pattern; as a bare type, the open (unconstrained) record top (§9.4) |
 | `()` | Tuple construction/pattern; as a bare type, the open (unconstrained) tuple top (§9.4) |
@@ -1749,7 +1920,10 @@ try_load_config :
 Implement tokens for:
 
 ```text
-# comments
+# comments, only after whitespace or at line start
+numerals: decimal, and based with # (16#ff), sign folded in when prefix
+"strings"
+- spacing-sensitive: prefix vs binary
 @ modules
 // effects/handlers
 -> arrows/lambdas
@@ -1763,6 +1937,8 @@ Implement tokens for:
 ! negation
 ^ symmetric difference
 ? matches
+?? Boolean conditional
+:: conditional else / companion body
 ```
 
 ### Stage 2: expressions
@@ -1777,14 +1953,15 @@ Implement:
 - record spreads;
 - tuple spreads;
 - lambdas;
-- function application;
+- function application by juxtaposition: left-associative, tighter than infix operators, looser than projection (§10.5);
 - field/position projection;
 - the close operator `.*`;
 - arithmetic and ordinary operators;
 - struct literals as bodies: `=` fields, field shorthand, local type declarations and imports (§11.1–11.3);
 - scope: forward references only to types and functions, and the dependency check (§11.5);
-- parenthesized type ascription `(e : T)` (§11.6);
-- `<<` final expressions.
+- type ascription `e : T`, parenthesized as the value of a declaration or field (§11.6);
+- the Boolean conditional `c ?? a :: b`, right-associative, loosest operator (§13.2);
+- literal elaboration: expected types flowing inward, default carriers, companion constructors run at compile time, and carrier fallback (§11.7).
 
 ### Stage 3: types
 
@@ -1811,9 +1988,10 @@ Implement:
 name = expression,
 name : Type = expression,
 TypeName = TypeExpression,
+TypeName = TypeExpression :: { companion body },
 ```
 
-Use identifier casing to distinguish value and type declarations. The same declaration grammar serves struct literals and module files, which are both bodies (§11.1, §18.8). Type declarations may be mutually recursive subject to guardedness (§3a.1–3a.2).
+Use identifier casing to distinguish value and type declarations. The same declaration grammar serves struct literals and module files, which are both bodies (§11.1, §18.8). Type declarations may be mutually recursive subject to guardedness (§3a.1–3a.2). A companion body is a body (§11.3a); its reserved members `from_literal_num` and `from_literal_str` are signature-checked (§11.7.3).
 
 ### Stage 5: patterns and matching
 
@@ -1821,13 +1999,13 @@ Implement:
 
 - wildcard;
 - bindings;
-- symbol constants and literals;
+- symbol constants and literals, the latter elaborated at the scrutinee's type (§11.7.5);
 - type-test patterns `p: T`, with the type extending to the next `->`, `,`, `=`, `)` or `}` (§13.3);
 - tuple patterns;
 - record patterns `{ f = p }` and `{ f: T = p }`, including the shorthands `{ f }` and `{ f: T }` (kept distinct from tuple patterns, §9.1a);
 - `|` patterns;
 - rest patterns for records and tuples (§13.3a);
-- `?`, including first-match arm order and the arm-union typing rule of §13.1;
+- `?`, always followed by a match body, including first-match arm order and the arm-union typing rule of §13.1;
 - narrowing, exhaustiveness, and redundancy checks (§13.4, §13.5).
 
 ### Stage 6: effects
@@ -1913,21 +2091,30 @@ List(A) = (.) | (A, List(A), .)
 ```
 
 ```text
-Text = List(Char),
-Number = (Sign, Digit, List(Digit), .),   # illustrative only; exact digit-list encoding TBD (§24)
+Text = List(Char) :: {
+  from_literal_str = \lit -> …,          # validates the elements; Raise(Text) on a malformed byte
+},
+Number = (Sign, Digit, List(Digit), .) :: {   # illustrative only; exact digit-list encoding TBD (§24)
+  from_literal_num = \lit -> …,
+},
 ```
 
-A numeral literal is not a separate concept layered on top of `Number` — it denotes a `Number` value directly, under whatever desugaring into the digit-list representation is settled (§24). This keeps the type system's primitive vocabulary small: enumerations (§5) and ranges (§6) remain finite constructs, and every unbounded type in the standard library is an instance of the one recursive mechanism defined here.
+A numeral literal is not a separate concept layered on top of `Number`: `Number`'s own constructor (§11.7.3) turns a `NumeralLiteral` into a digit list, so the digit-list encoding is `Number`'s business and not the grammar's. This keeps the type system's primitive vocabulary small: enumerations (§5) and ranges (§6) remain finite constructs, and every unbounded type in the standard library is an instance of the one recursive mechanism defined here.
 
 Note that recursion through an arrow type's output, as permitted by §3a.1, is what a hypothetical function-top (`[] -> Top`) would require — but since the language has no top type (§3.3), this guard form is used for genuinely recursive function protocols (step-by-step producers handed to a caller; state-machine/typestate APIs; parser combinators — note that effect-handler continuations do not need it, since handlers are deep, §16.5.2) rather than for constructing a universal type.
 
 ## 24. Intentionally unresolved questions
 
 1. Enumeration operations (§5.5): the exact set, their syntax, and their types — for instance what `succ` returns for the last member, and how `ord`'s argument type is tied to the declaration it is asked of. Also whether a range written high-to-low, such as `10..1`, is an error or a descending order.
-2. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order) and the desugaring rule from numeral literals to `Number` values.
+2. Exact digit-list encoding of `Number` (sign representation, leading zeros, digit order). How a `NumeralLiteral` becomes a `Number` is settled (`Number.from_literal_num`, §11.7); only the encoding it produces is open.
 3. The exact set of built-in effects and the signatures of their operations (§14.6).
 4. Polymorphic function signatures: how type and effect variables in value signatures, such as `Element` and `E` in `for_each` (§17.1) or `E` in `Raise.raise` (§14.7), are introduced, and how parametric polymorphism combines with semantic subtyping and negation. Parameterized *types* are settled (§11.4); polymorphic *functions* are not. The theory is non-trivial; see Castagna, Nguyễn, Xu, Im, Lenglet, Padovani, *Polymorphic Functions with Set-Theoretic Types, Part 1: Syntax, Semantics, and Evaluation*, POPL 2014, and Castagna, Nguyễn, Xu, Abate, *Part 2: Local Type Inference and Type Reconstruction*, POPL 2015.
 5. A module-qualified syntax that would let a descendant module name an ancestor's private field labels directly, instead of going through the ancestor's private helpers (§8.2). Not needed now; a possible later addition.
+6. String literals (§2.4): the escape syntax, and the exact element model of a `StringLiteral` (Unicode scalars and explicit bytes) and of a `NumeralLiteral` (§2.3) as the types constructors receive.
+7. Application next to a following projection (§10.5): whether `f(x).y` means `(f(x)).y`, as most readers expect, or `f ((x).y)`, as projection binding tighter than application would give. One option is to make a bracket adjacent to the callee a high-precedence call, as F# does, which would add a third spacing-sensitive spot (§2.5).
+8. Companions of parameterized types (§11.3a): how `List.member` is reached and instantiated, which depends on polymorphic functions (item 4).
+9. The precision of an elaborated literal's type: whether `5` checked against `Number` has type `Number` or the singleton `5` (§11.7.4). This affects error messages and inferred types, not what programs mean.
+10. Unary negation and the arithmetic operators as library functions: their names and how an infix operator is resolved (§2.5, §20).
 
 Resolved since the previous revision and removed from this list:
 
@@ -1949,7 +2136,12 @@ Resolved since the previous revision and removed from this list:
 - Type parameter syntax: `Name(T_1, ..., T_n)`, a parameter list rather than a tuple type, with no juxtaposition form (§11.4).
 - Declaration syntax: `=` binds and `:` gives a type, everywhere. Struct literals and module files are both bodies with one declaration grammar, types can be declared at any level, and declarations are separated by commas (§11.1–11.3, §18.8).
 - Scope: no forward references, except to types and functions, and no value may depend on a later value through the functions it calls (§11.5).
-- Type ascription in expressions: `(e : T)`, always parenthesized, so the Boolean conditional keeps `c ? a : b` (§11.6, §13.2).
+- Type ascription in expressions: `e : T`, parenthesized only as the value of a declaration or field. The Boolean conditional moved to `c ?? a :: b`, so `:` only ever gives a type (§11.6, §13.2).
 - Types in patterns appear only after `:` (`n: Int`, `{ x: Int = n }`); bare type tests and pattern-level `&` are gone (§13.3).
 - Enumeration order and duplicates: enumerations are sets, so order never affects types or subtyping; order belongs to the declaration and is asked of it by name (`Color.ord(x)`); duplicate members are a type error (§5.2–5.5).
 - Private-module visibility, generalized to all private declarations: visible to the declaring module and its descendants only; packages confined to `ext/package_name`, so subtrees never cross packages; import cycles allowed within a package (§18.1–§18.6).
+- Literals: numerals and strings are literals, neither values nor types, elaborated at compile time at their expected type by a pure companion function (`from_literal_num`, `from_literal_str`), failing with `Raise(Text)`; default carriers `Text` and `Number`; carrier fallback for ranges, enumerations and unions; no literal is a subtype of anything (§11.7).
+- Companions: `Type = … :: { body }`, found by declared name, not part of the type (§11.3a).
+- Numeral tokens: the sign is part of a prefix numeral; based numerals `base#digits` with bases 2–36 (§2.3). `#` starts a comment only after whitespace or at line start (§2.1).
+- Application by juxtaposition, with `-` prefix or binary decided by spacing (§2.5, §10.5).
+- The Boolean conditional is `c ?? a :: b`, so that `?` is always followed by a match body and needs no look-ahead (§13.1–13.2).
