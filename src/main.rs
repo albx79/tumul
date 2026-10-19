@@ -1,5 +1,4 @@
 mod ast;
-mod lexer;
 mod parser;
 
 use std::env;
@@ -12,7 +11,5 @@ fn main() {
         std::process::exit(1);
     }
     let filename = &args[1];
-    let code = fs::read_to_string(filename)
-        .expect("Failed to read file");
-    parser::parse(&code);
+    let code = fs::read_to_string(filename).expect("Failed to read file");
 }

@@ -1,0 +1,16 @@
+Program = { SOI ~ NEWLINE* ~ BlockContent* ~ NEWLINE* ~ EOI }
+
+NewBlock = _{
+    // The first line in the block
+    PEEK_ALL ~ PUSH("  "+ | "\t"+) ~ BlockContent ~
+    // Subsequent lines in the block
+    (PEEK_ALL ~ BlockContent)* ~
+    // Remove the last layer of indentation from the stack when exiting the block
+    DROP
+}
+
+BlockName = { ASCII_ALPHA+ }
+
+BlockContent = {
+    BlockName ~ (NEWLINE | EOI) ~ NewBlock*
+}
